@@ -1,0 +1,123 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Apache Software License",
+]
+name = "nomad-file-parser"
+description = "A collection of python utilities for parsing files."
+dynamic = ["version"]
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Alvin Noe Ladines", email = "ladinesa@physik.hu-berlin.de" },
+]
+maintainers = [
+    { name = "Alvin Noe Ladines", email = "ladinesa@physik.hu-berlin.de" },
+]
+license = { file = "LICENSE" }
+dependencies = [
+    "nomad-lab>=1.3.16.dev100",
+    # we do not rely on nomad-lab dependencies for the following in case 
+    # of removal or breaking update 
+    "h5py>=3.6.0",
+    "jmespath>=0.10.0",
+    "jsonpath-ng",
+    "lxml>=5.2",
+]
+
+[project.urls]
+Repository = "https://github.com/FAIRmat-NFDI/nomad-file-parser"
+
+[project.optional-dependencies]
+dev = ["ruff", "pytest", "structlog"]
+
+[tool.ruff]
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+]
+
+# Same as Black.
+line-length = 88
+indent-width = 4
+
+[tool.uv]
+index-url = "https://gitlab.mpcdf.mpg.de/api/v4/projects/2187/packages/pypi/simple"
+build-constraint-dependencies = ["wheel<0.46"]
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # isort
+    "I",
+    # pylint
+    "PL",
+]
+
+ignore = [
+    "F403", # 'from module import *' used; unable to detect undefined names
+]
+
+fixable = ["ALL"]
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+# this is entirely optional, you can remove this if you wish to
+[tool.ruff.format]
+# use single quotes for strings.
+quote-style = "single"
+
+# indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ['PLR2004']
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools_scm]
