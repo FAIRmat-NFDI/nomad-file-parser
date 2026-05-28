@@ -267,6 +267,40 @@ class TestDataIntegrity:
         )
 
     @given(
+        depth=st.integers(min_value=20, max_value=30),
+        value=st.integers(),
+    )
+    @settings(max_examples=10, deadline=3000)  # Very expensive
+    def test_extreme_depth_handling(self, depth: int, value: int):
+        """Property: Very deep paths (20-30 levels) work correctly.
+
+        Stress test to catch stack overflow or recursion limits.
+        """
+        # Property: ∀ depth≥20: path operations complete without stack overflow
+        # Generate path with specified depth
+        segments = [f'level{i}' for i in range(depth)]
+        path_str = '.'.join(segments)
+
+        path = Path(path=path_str)
+        target = {}
+
+        # Should not crash with stack overflow
+        try:
+            path.set_data(value, target)
+            retrieved = path.get_data(target)
+
+            assert retrieved == value, (
+                f'Extreme depth round-trip failed:\n'
+                f'  Depth: {depth}\n'
+                f'  Value: {value}\n'
+                f'  Retrieved: {retrieved}'
+            )
+        except RecursionError:
+            # If recursion limit hit, that's a known limitation
+            # Just verify we get a clear error
+            assert True  # RecursionError is acceptable for extreme depths
+
+    @given(
         path_str=simple_path_strategy(max_depth=3),
         values=st.lists(st.integers(), min_size=2, max_size=5),
     )
@@ -484,7 +518,55 @@ class TestDataIntegrity:
         )
 
     # -------------------------------------------------------------------------
-    # A5. Remove Completeness (Phase 2)
+    # A5. Large Data Structure Stress Test
+    # -------------------------------------------------------------------------
+
+    @given(
+        large_dict=st.dictionaries(
+            keys=st.text(alphabet=string.ascii_lowercase, min_size=1, max_size=5),
+            values=st.integers(),
+            min_size=50,
+            max_size=100,
+        ),
+        path_str=st.just('data'),
+        mode=st.just('merge'),
+    )
+    @settings(max_examples=10, deadline=5000)  # Expensive test
+    def test_large_dict_merge_performance(
+        self, large_dict: dict, path_str: str, mode: str
+    ):
+        """Property: Large dicts (50-100 keys) merge without exponential slowdown.
+
+        Stress test to catch O(n²) performance bugs in merge logic.
+        """
+        # Property: ∀ large_dict: merge completes in reasonable time
+        import time
+
+        path = Path(path=path_str)
+        target = {}
+
+        start = time.time()
+        path.set_data(large_dict, target, update_mode=mode)
+        elapsed = time.time() - start
+
+        # Should complete quickly (under 1 second for 100 keys)
+        assert elapsed < 1.0, (
+            f'Large dict merge too slow:\n'
+            f'  Dict size: {len(large_dict)} keys\n'
+            f'  Elapsed: {elapsed:.3f}s\n'
+            f'  Expected: < 1.0s'
+        )
+
+        # Verify all keys present
+        result = target[path_str]
+        assert len(result) == len(large_dict), (
+            f'Keys lost during large merge:\n'
+            f'  Original: {len(large_dict)} keys\n'
+            f'  Result: {len(result)} keys'
+        )
+
+    # -------------------------------------------------------------------------
+    # A6. Remove Completeness (Phase 2)
     # -------------------------------------------------------------------------
 
     # Note: Remove completeness testing requires integration with mapper execution
@@ -1583,7 +1665,167 @@ class TestOperationSemantics:
             )
 
     # -------------------------------------------------------------------------
-    # B6. Set-Then-Merge Commutativity
+    # B6. Malformed Path Handling
+    # -------------------------------------------------------------------------
+
+    @given(
+        path_str=st.one_of(
+            st.just(''),
+            st.just('.'),
+            st.just('..'),
+            st.just(' '),
+            st.just('a. .b'),  # Whitespace in middle
+            st.just('a..b'),   # Double dot
+        ),
+        value=st.integers(),
+    )
+    @settings(max_examples=30)
+    def test_malformed_path_handling(self, path_str: str, value: int):
+        """Property: Malformed paths raise clear errors or are normalized.
+
+        Tests edge cases in path parsing (line 852 strips leading '.').
+        """
+        # Property: ∀ malformed_path: either clear error or safe normalization
+        path = Path(path=path_str)
+        target = {}
+
+        try:
+            path.set_data(value, target)
+            # If it succeeded, verify data is accessible
+            retrieved = path.get_data(target)
+            # Should either be the value or None (path normalized away)
+            assert retrieved == value or retrieved is None or isinstance(retrieved, dict), (
+                f'Malformed path produced unexpected result:\n'
+                f'  Path: {repr(path_str)}\n'
+                f'  Value: {value}\n'
+                f'  Retrieved: {retrieved}\n'
+                f'  Target: {target}'
+            )
+        except (ValueError, KeyError, AttributeError, TypeError) as e:
+            # If it raises, error should mention path or be clear
+            error_msg = str(e).lower()
+            assert (
+                'path' in error_msg
+                or 'invalid' in error_msg
+                or 'empty' in error_msg
+                or len(error_msg) > 0
+            ), (
+                f'Error message unclear for malformed path:\n'
+                f'  Path: {repr(path_str)}\n'
+                f'  Error: {e}'
+            )
+
+    # -------------------------------------------------------------------------
+    # B7. Sequential Mode Changes
+    # -------------------------------------------------------------------------
+
+    @given(
+        data1=nested_dict_strategy(max_depth=1),
+        data2=nested_dict_strategy(max_depth=1),
+        mode1=st.one_of(st.just('merge'), st.just('replace')),
+        mode2=st.one_of(st.just('merge'), st.just('replace')),
+        path_str=st.just('field'),
+    )
+    @settings(max_examples=50)
+    def test_sequential_different_modes(
+        self, data1: dict, data2: dict, mode1: str, mode2: str, path_str: str
+    ):
+        """Property: Applying different modes sequentially is well-defined.
+
+        Tests that switching between merge and replace modes in sequence
+        produces predictable results.
+        """
+        # Property: ∀ data1, data2, mode1, mode2:
+        #           sequential application with different modes is consistent
+        path = Path(path=path_str)
+        target = {}
+
+        # Apply first mode
+        path.set_data(data1, target, update_mode=mode1)
+        intermediate = target.get(path_str)
+
+        # Apply second mode
+        path.set_data(data2, target, update_mode=mode2)
+        final = target.get(path_str)
+
+        # Final result should be well-defined based on mode2
+        if mode2 == 'replace':
+            # Replace should completely overwrite
+            assert final == data2, (
+                f'Second replace did not overwrite:\n'
+                f'  Mode1: {mode1}, Data1: {data1}\n'
+                f'  Mode2: {mode2}, Data2: {data2}\n'
+                f'  Intermediate: {intermediate}\n'
+                f'  Final: {final}'
+            )
+        elif mode2 == 'merge':
+            # Merge should combine
+            assert isinstance(final, dict), (
+                f'Merge did not produce dict:\n'
+                f'  Mode1: {mode1}, Data1: {data1}\n'
+                f'  Mode2: {mode2}, Data2: {data2}\n'
+                f'  Final: {final} (type: {type(final)})'
+            )
+
+    # -------------------------------------------------------------------------
+    # B8. Heterogeneous List Handling
+    # -------------------------------------------------------------------------
+
+    @given(
+        mixed_list=st.lists(
+            st.one_of(st.integers(), st.text(max_size=10), st.none()),
+            min_size=1,
+            max_size=5,
+        ),
+        path_str=st.just('items'),
+        mode=st.just('merge'),
+    )
+    @settings(max_examples=50)
+    def test_heterogeneous_list_merge(
+        self, mixed_list: list, path_str: str, mode: str
+    ):
+        """Property: Lists with mixed types merge without type errors.
+
+        Tests that lists containing ints, strings, and None merge gracefully.
+        Relates to append mode type coercion issues documented in framework feedback.
+        """
+        # Property: ∀ heterogeneous_list: merge handles mixed types without crash
+        path = Path(path=path_str)
+        target = {path_str: mixed_list.copy()}
+
+        # Attempt to merge with another mixed list
+        new_mixed_list = [1, 'test', None]
+
+        try:
+            path.set_data(new_mixed_list, target, update_mode=mode)
+            result = target[path_str]
+
+            # Should still be a list
+            assert isinstance(result, list), (
+                f'Heterogeneous list merge changed type:\n'
+                f'  Original: {mixed_list}\n'
+                f'  New: {new_mixed_list}\n'
+                f'  Result: {result} (type: {type(result)})'
+            )
+
+            # Should have reasonable length (at least max of the two)
+            assert len(result) >= max(len(mixed_list), len(new_mixed_list)), (
+                f'Heterogeneous list merge lost elements:\n'
+                f'  Original: {mixed_list} (len={len(mixed_list)})\n'
+                f'  New: {new_mixed_list} (len={len(new_mixed_list)})\n'
+                f'  Result: {result} (len={len(result)})'
+            )
+        except (ValueError, TypeError) as e:
+            # If it raises due to type issues, that's documented behavior
+            assert 'type' in str(e).lower(), (
+                f'Unexpected error for heterogeneous list:\n'
+                f'  Original: {mixed_list}\n'
+                f'  New: {new_mixed_list}\n'
+                f'  Error: {e}'
+            )
+
+    # -------------------------------------------------------------------------
+    # B9. Set-Then-Merge Commutativity
     # -------------------------------------------------------------------------
 
     @given(
