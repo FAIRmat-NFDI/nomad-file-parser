@@ -236,6 +236,69 @@ class TestDataIntegrity:
             f'  Target dict: {target}'
         )
 
+    @given(
+        path_str=simple_path_strategy(max_depth=10),
+        value=st.integers(),
+    )
+    @settings(max_examples=50)
+    def test_get_set_inverse_deep_nesting(self, path_str: str, value: int):
+        """Property: get(set(data, deep_path, value), deep_path) == value
+
+        Tests round-trip with deeply nested paths (up to 10 levels).
+
+        Rationale: Research shows pain points at 3+ levels, stress test at 10.
+        """
+        # Property: ∀ path (depth≤10), value: get(set(data, path, v), path) == v
+        path = Path(path=path_str)
+        target = {}
+
+        # Set the value
+        path.set_data(value, target)
+
+        # Get it back
+        retrieved = path.get_data(target)
+
+        assert retrieved == value, (
+            f'Round-trip failed for deep path {path_str}:\n'
+            f'  Path depth: {len(path_str.split("."))}\n'
+            f'  Original value: {value}\n'
+            f'  Retrieved value: {retrieved}\n'
+            f'  Target dict: {target}'
+        )
+
+    @given(
+        path_str=simple_path_strategy(max_depth=3),
+        values=st.lists(st.integers(), min_size=2, max_size=5),
+    )
+    @settings(max_examples=50)
+    def test_sequential_sets_last_write_wins(
+        self, path_str: str, values: list
+    ):
+        """Property: After sequential sets, final value is from last set.
+
+        Tests that later writes win, no lingering state from previous writes.
+        """
+        # Property: ∀ path, [v1...vn]: after sequential sets, get(path) == vn
+        path = Path(path=path_str)
+        target = {}
+
+        # Set values sequentially
+        for value in values:
+            path.set_data(value, target)
+
+        # Get final value
+        retrieved = path.get_data(target)
+
+        # Should equal the last value written
+        assert retrieved == values[-1], (
+            f'Sequential sets did not preserve last write:\n'
+            f'  Path: {path_str}\n'
+            f'  Values written: {values}\n'
+            f'  Expected (last): {values[-1]}\n'
+            f'  Retrieved: {retrieved}\n'
+            f'  Target: {target}'
+        )
+
     # -------------------------------------------------------------------------
     # A3. Data Isolation
     # -------------------------------------------------------------------------
@@ -482,6 +545,30 @@ class TestOperationSemantics:
             f'  Reduced path: {path.reduced_path}'
         )
 
+    @given(
+        parent_path=simple_path_strategy(max_depth=3),
+        relative_path=relative_path_strategy(max_depth=2),
+    )
+    @settings(max_examples=50)
+    def test_path_parent_chain_consistency(
+        self, parent_path: str, relative_path: str
+    ):
+        """Property: Child absolute path starts with parent absolute path.
+
+        Tests that parent propagation maintains hierarchy correctly.
+        """
+        # Property: ∀ path with parent: path.absolute_path.startswith(path.parent.absolute_path)
+        parent = Path(path=parent_path)
+        child = Path(path=relative_path, parent=parent)
+
+        # Child's absolute path should start with parent's absolute path
+        assert child.absolute_path.startswith(parent.absolute_path), (
+            f'Child absolute path does not start with parent:\n'
+            f'  Parent path: {parent_path} (absolute: {parent.absolute_path})\n'
+            f'  Child path: {relative_path} (absolute: {child.absolute_path})\n'
+            f'  Child should start with: {parent.absolute_path}'
+        )
+
     # -------------------------------------------------------------------------
     # B1. Extended Merge Semantics (Phase 2)
     # -------------------------------------------------------------------------
@@ -660,6 +747,184 @@ class TestOperationSemantics:
             f'  Expected first element: {new_list[0]}\n'
             f'  Got: {result[0]}'
         )
+
+    # -------------------------------------------------------------------------
+    # B1. Additional Merge Properties (Suggested Tests)
+    # -------------------------------------------------------------------------
+
+    # TODO: Merge commutativity fails due to key normalization (.key vs key)
+    # See: mapping-parser-framework-feedback.md for details
+    # Uncomment when framework handles key normalization consistently
+
+    # @given(
+    #     data1=nested_dict_strategy(max_depth=2),
+    #     data2=nested_dict_strategy(max_depth=2),
+    # )
+    # @settings(max_examples=50)
+    # def test_merge_commutative_disjoint_keys(
+    #     self, data1: dict, data2: dict
+    # ):
+    #     """Property: merge(a, b) == merge(b, a) for disjoint keys.
+    #
+    #     Algebraic structure: Merge is commutative when key sets don't overlap.
+    #
+    #     Tests that merge order doesn't matter when dicts have no shared keys.
+    #     """
+    #     # Property: ∀ data1, data2 (disjoint keys): merge(data1, data2) == merge(data2, data1)
+    #     # Skip if keys overlap or have key normalization issues
+    #     if isinstance(data1, dict) and isinstance(data2, dict):
+    #         keys1 = set(data1.keys())
+    #         keys2 = set(data2.keys())
+    #         # Skip if any key starts with '.' (normalization issues)
+    #         if any(k.startswith('.') for k in keys1 | keys2):
+    #             return
+    #         if keys1 & keys2:
+    #             return  # Keys overlap, skip
+    #
+    #     path = Path(path='content')
+    #
+    #     # Merge in both orders
+    #     target_ab = {}
+    #     path.set_data(data1, target_ab, update_mode='merge')
+    #     path.set_data(data2, target_ab, update_mode='merge')
+    #
+    #     target_ba = {}
+    #     path.set_data(data2, target_ba, update_mode='merge')
+    #     path.set_data(data1, target_ba, update_mode='merge')
+    #
+    #     # Both should yield same result for disjoint keys
+    #     assert target_ab == target_ba, (
+    #         f'Merge is not commutative for disjoint keys:\n'
+    #         f'  Data1: {data1}\n'
+    #         f'  Data2: {data2}\n'
+    #         f'  merge(a,b): {target_ab}\n'
+    #         f'  merge(b,a): {target_ba}'
+    #     )
+
+    @given(
+        old_data=nested_dict_strategy(max_depth=2),
+        new_data=nested_dict_strategy(max_depth=2),
+    )
+    @settings(max_examples=50)
+    def test_replace_mode_idempotence(
+        self, old_data: dict, new_data: dict
+    ):
+        """Property: replace(replace(old, new), new) == replace(old, new)
+
+        Algebraic structure: Replace is idempotent with same new value.
+
+        Tests that replacing twice with same value is same as replacing once.
+        """
+        # Property: ∀ old, new: replace(replace(old, new), new) == replace(old, new)
+        path = Path(path='data')
+
+        # Replace once
+        target_once = {'data': old_data}
+        path.set_data(new_data, target_once, update_mode='replace')
+        result_once = target_once['data']
+
+        # Replace twice
+        target_twice = {'data': old_data}
+        path.set_data(new_data, target_twice, update_mode='replace')
+        path.set_data(new_data, target_twice, update_mode='replace')
+        result_twice = target_twice['data']
+
+        # Both should be identical
+        assert result_once == result_twice, (
+            f'Replace is not idempotent:\n'
+            f'  Old data: {old_data}\n'
+            f'  New data: {new_data}\n'
+            f'  Replace once: {result_once}\n'
+            f'  Replace twice: {result_twice}'
+        )
+
+    @given(
+        data1=nested_dict_strategy(max_depth=2),
+        data2=nested_dict_strategy(max_depth=2),
+    )
+    @settings(max_examples=50)
+    def test_merge_preserves_type_dict(
+        self, data1: dict, data2: dict
+    ):
+        """Property: type(merge(dict, dict)) == dict
+
+        Tests that merging dicts produces a dict.
+        """
+        # Property: ∀ dict1, dict2: type(merge(dict1, dict2)) == dict
+        path = Path(path='content')
+        target = {}
+
+        path.set_data(data1, target, update_mode='merge')
+        path.set_data(data2, target, update_mode='merge')
+
+        result = target.get('content')
+
+        assert isinstance(result, dict), (
+            f'Merge did not preserve dict type:\n'
+            f'  Data1: {data1} (type: {type(data1)})\n'
+            f'  Data2: {data2} (type: {type(data2)})\n'
+            f'  Result: {result} (type: {type(result)})'
+        )
+
+    @given(
+        list1=st.lists(st.integers(), max_size=3),
+        list2=st.lists(st.integers(), max_size=3),
+    )
+    @settings(max_examples=50)
+    def test_merge_preserves_type_list(
+        self, list1: list, list2: list
+    ):
+        """Property: type(merge(list, list)) == list
+
+        Tests that merging lists produces a list.
+        """
+        # Property: ∀ list1, list2: type(merge(list1, list2)) == list
+        path = Path(path='items')
+        target = {'items': list1}
+
+        path.set_data(list2, target, update_mode='merge')
+
+        result = target['items']
+
+        assert isinstance(result, list), (
+            f'Merge did not preserve list type:\n'
+            f'  List1: {list1} (type: {type(list1)})\n'
+            f'  List2: {list2} (type: {type(list2)})\n'
+            f'  Result: {result} (type: {type(result)})'
+        )
+
+    @given(
+        data1=nested_dict_strategy(max_depth=2),
+        data2=nested_dict_strategy(max_depth=2),
+    )
+    @settings(max_examples=50)
+    def test_merge_key_subset_property(
+        self, data1: dict, data2: dict
+    ):
+        """Property: keys(merge(a, b)) ⊆ keys(a) ∪ keys(b)
+
+        Tests that merge doesn't create phantom keys.
+        """
+        # Property: ∀ data1, data2: keys(merge(data1, data2)) ⊆ keys(data1) ∪ keys(data2)
+        path = Path(path='content')
+        target = {}
+
+        path.set_data(data1, target, update_mode='merge')
+        path.set_data(data2, target, update_mode='merge')
+
+        result = target.get('content', {})
+
+        if isinstance(result, dict):
+            result_keys = set(result.keys())
+            input_keys = set(data1.keys()) | set(data2.keys())
+
+            assert result_keys <= input_keys, (
+                f'Merge created phantom keys:\n'
+                f'  Data1 keys: {set(data1.keys())}\n'
+                f'  Data2 keys: {set(data2.keys())}\n'
+                f'  Result keys: {result_keys}\n'
+                f'  Phantom keys: {result_keys - input_keys}'
+            )
 
 
 # =============================================================================
