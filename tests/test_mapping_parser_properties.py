@@ -1234,70 +1234,120 @@ class TestOperationSemantics:
 
     @given(
         path_str=simple_path_strategy(max_depth=2),
+        existing_value=st.one_of(st.integers(), st.text(alphabet=string.ascii_letters, max_size=10)),
         mode=update_mode_strategy(),
     )
     @settings(max_examples=50)
-    def test_none_value_handling_in_merge(
-        self, path_str: str, mode: str
+    def test_none_is_noop_all_modes(
+        self, path_str: str, existing_value: Any, mode: str
     ):
-        """Property: Merging None values is well-defined.
+        """Property: set_data(None) is a no-op regardless of mode.
 
-        Tests that None values don't cause crashes or undefined behavior.
+        Framework semantics: None means "no data to set" (absence), not "set to None".
+        This is intentional for parser use case where None = "field not in source file".
+
+        Tests that None values don't modify existing data or crash.
         """
-        # Property: ∀ data, path, mode: merge(data, {path: None}, mode) is well-defined
+        # Property: ∀ data, path, mode: set_data(None, data, mode) leaves data unchanged
         path = Path(path=path_str)
-        target = {'existing': 'data'}
+        target = {}
 
-        # Merge None value should not crash
-        try:
-            path.set_data(None, target, update_mode=mode)
-            # If it succeeds, result should be valid dict
-            assert isinstance(target, dict), (
-                f'Merge with None corrupted target type:\n'
-                f'  Path: {path_str}\n'
-                f'  Mode: {mode}\n'
-                f'  Result type: {type(target)}'
-            )
-        except (ValueError, TypeError) as e:
-            # If it raises, error should be clear
-            assert 'None' in str(e) or 'null' in str(e).lower(), (
-                f'Error message unclear for None handling:\n'
-                f'  Path: {path_str}\n'
-                f'  Mode: {mode}\n'
-                f'  Error: {e}'
-            )
+        # Set up existing value at the path location
+        path.set_data(existing_value, target, update_mode='replace')
 
-    # TODO: None value in replace mode is intentionally skipped by framework
-    # The framework treats None as "no value" and skips setting it.
-    # This is documented behavior, not a bug.
+        # Make a copy to verify no mutation
+        import copy
+        target_copy = copy.deepcopy(target)
 
-    # @given(
-    #     existing_value=st.integers(),
-    # )
-    # @settings(max_examples=50)
-    # def test_none_in_replace_mode_clears_value(
-    #     self, existing_value: int
-    # ):
-    #     """Property: replace(existing, None) sets None explicitly.
-    #
-    #     Tests that None can explicitly replace existing values in replace mode.
-    #     """
-    #     # Property: ∀ existing: replace(existing, None) results in None or absence
-    #     path = Path(path='value')
-    #     target = {'value': existing_value}
-    #
-    #     # Replace with None
-    #     path.set_data(None, target, update_mode='replace')
-    #
-    #     result = target.get('value')
-    #
-    #     # Result should be None or key should be absent
-    #     assert result is None or 'value' not in target, (
-    #         f'Replace with None did not clear value:\n'
-    #         f'  Existing: {existing_value}\n'
-    #         f'  Result: {result}\n'
-    #         f'  Target: {target}'
-    #     )
+        # Set None should be no-op (doesn't change the existing value)
+        path.set_data(None, target, update_mode=mode)
+
+        # Target should be unchanged
+        assert target == target_copy, (
+            f'set_data(None) modified target (mode={mode}):\n'
+            f'  Path: {path_str}\n'
+            f'  Existing value: {existing_value}\n'
+            f'  Before: {target_copy}\n'
+            f'  After: {target}\n'
+            f'  Expected: None is no-op, target unchanged'
+        )
+
+    @given(
+        existing_value=st.integers(),
+    )
+    @settings(max_examples=50)
+    def test_none_differs_from_empty_collections(
+        self, existing_value: int
+    ):
+        """Property: set_data(None) ≠ set_data({}) ≠ set_data([]).
+
+        Framework semantics: None is skipped (no-op), but empty collections are set.
+
+        Tests that None is treated differently from explicit empty values.
+        """
+        # Property: ∀ existing: set(None) is no-op, but set({}) and set([]) modify
+        path = Path(path='value')
+
+        # Test 1: None leaves existing value unchanged
+        target_none = {'value': existing_value}
+        path.set_data(None, target_none, update_mode='replace')
+        assert target_none['value'] == existing_value, (
+            f'set_data(None) should be no-op:\n'
+            f'  Expected: {existing_value}\n'
+            f'  Got: {target_none["value"]}'
+        )
+
+        # Test 2: Empty dict replaces existing value
+        target_empty_dict = {'value': existing_value}
+        path.set_data({}, target_empty_dict, update_mode='replace')
+        assert target_empty_dict['value'] == {}, (
+            f'set_data({{}}) should set empty dict:\n'
+            f'  Expected: {{}}\n'
+            f'  Got: {target_empty_dict["value"]}'
+        )
+
+        # Test 3: Empty list replaces existing value
+        target_empty_list = {'value': existing_value}
+        path.set_data([], target_empty_list, update_mode='replace')
+        assert target_empty_list['value'] == [], (
+            f'set_data([]) should set empty list:\n'
+            f'  Expected: []\n'
+            f'  Got: {target_empty_list["value"]}'
+        )
+
+    @given(
+        path_str=simple_path_strategy(max_depth=2),
+    )
+    @settings(max_examples=50)
+    def test_none_creates_path_structure_but_not_value(
+        self, path_str: str
+    ):
+        """Property: set_data(None) creates path structure but no final value.
+
+        Framework behavior: Path traversal creates intermediate dicts, but final
+        value is not set (remains empty dict). This allows path structure to exist
+        for subsequent operations while respecting "no data" semantics.
+
+        Tests that None creates navigable structure without setting leaf value.
+        """
+        # Property: ∀ path ∉ target: set_data(None, path) creates path but leaf is empty
+        path = Path(path=path_str)
+        target = {}
+
+        # Set None at non-existent path
+        path.set_data(None, target, update_mode='merge')
+
+        # Path structure should exist, but final value should be empty dict
+        result = path.get_data(target)
+
+        # Result should be empty dict (path created, but no value set)
+        assert result == {} or result is None, (
+            f'set_data(None) set unexpected value:\n'
+            f'  Path: {path_str}\n'
+            f'  Expected: {{}} or None\n'
+            f'  Got: {result}\n'
+            f'  None should create structure but not set leaf value'
+        )
 
     # -------------------------------------------------------------------------
     # B5. Set-Then-Merge Commutativity
