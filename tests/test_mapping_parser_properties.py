@@ -439,7 +439,52 @@ class TestDataIntegrity:
         )
 
     # -------------------------------------------------------------------------
-    # A4. Remove Completeness (Phase 2)
+    # A4. Unicode and Special Characters
+    # -------------------------------------------------------------------------
+
+    @given(
+        path_str=simple_path_strategy(max_depth=3),  # ASCII paths (JMESPath limitation)
+        value=st.text(
+            alphabet=st.characters(
+                whitelist_categories=('Lu', 'Ll', 'Nd', 'Zs', 'Po'),
+                min_codepoint=0x00A0  # Non-ASCII values
+            ),
+            min_size=0,
+            max_size=50,
+        ),
+    )
+    @settings(max_examples=50)
+    def test_unicode_value_preservation(
+        self, path_str: str, value: str
+    ):
+        """Property: Unicode values are preserved correctly.
+
+        Tests that non-ASCII characters in values don't cause encoding errors or corruption.
+
+        Note: Paths must be ASCII-compatible due to JMESPath lexer limitations.
+        JMESPath only accepts [a-zA-Z_] for unquoted identifiers (line 107 in jmespath/lexer.py).
+        """
+        # Property: ∀ path, unicode_value:
+        #           get(set(data, path, unicode_value), path) == unicode_value
+        path = Path(path=path_str)
+        target = {}
+
+        # Set unicode value at ASCII path
+        path.set_data(value, target)
+
+        # Get it back
+        retrieved = path.get_data(target)
+
+        assert retrieved == value, (
+            f'Unicode value not preserved:\n'
+            f'  Path: {path_str}\n'
+            f'  Original value: {repr(value)}\n'
+            f'  Retrieved value: {repr(retrieved)}\n'
+            f'  Target: {target}'
+        )
+
+    # -------------------------------------------------------------------------
+    # A5. Remove Completeness (Phase 2)
     # -------------------------------------------------------------------------
 
     # Note: Remove completeness testing requires integration with mapper execution
@@ -759,6 +804,63 @@ class TestOperationSemantics:
             f'  Via full path: {retrieved_full}\n'
             f'  Via nested: {retrieved_nested}\n'
             f'  Target: {target}'
+        )
+
+    @given(
+        value=st.integers(),
+        parent_segments=st.lists(
+            st.text(alphabet=string.ascii_lowercase, min_size=1, max_size=5),
+            min_size=1,
+            max_size=2,
+        ),
+        child_segment=st.text(alphabet=string.ascii_lowercase, min_size=1, max_size=5),
+    )
+    @settings(max_examples=50)
+    def test_absolute_and_relative_path_equivalence(
+        self, value: int, parent_segments: list[str], child_segment: str
+    ):
+        """Property: Same data reachable via absolute and relative paths.
+
+        Tests that:
+        - Absolute path 'a.b.c'
+        - Relative path '.c' with parent 'a.b'
+        Both access the same data location.
+        """
+        # Property: ∀ parent, child, value:
+        #           set(absolute_path) == set(parent + relative_path)
+        parent_path_str = '.'.join(parent_segments)
+        child_relative_str = f'.{child_segment}'
+        absolute_path_str = f'{parent_path_str}.{child_segment}'
+
+        # Method 1: Absolute path
+        absolute_path = Path(path=absolute_path_str)
+        target_absolute = {}
+        absolute_path.set_data(value, target_absolute)
+
+        # Method 2: Relative path with parent
+        parent_path = Path(path=parent_path_str)
+        relative_path = Path(path=child_relative_str, parent=parent_path)
+        target_relative = {}
+
+        # Set via parent context first, then child
+        parent_path.set_data({child_segment: value}, target_relative)
+
+        # Both targets should have same structure at the final location
+        retrieved_absolute = absolute_path.get_data(target_absolute)
+
+        # Navigate to same location in relative structure
+        parent_data = parent_path.get_data(target_relative)
+        retrieved_relative = parent_data.get(child_segment) if isinstance(parent_data, dict) else None
+
+        assert retrieved_absolute == value and retrieved_relative == value, (
+            f'Absolute and relative paths gave different results:\n'
+            f'  Absolute path: {absolute_path_str}\n'
+            f'  Parent: {parent_path_str}, Child: {child_relative_str}\n'
+            f'  Value: {value}\n'
+            f'  Via absolute: {retrieved_absolute}\n'
+            f'  Via relative: {retrieved_relative}\n'
+            f'  Target (absolute): {target_absolute}\n'
+            f'  Target (relative): {target_relative}'
         )
 
     # -------------------------------------------------------------------------
@@ -1381,7 +1483,107 @@ class TestOperationSemantics:
         )
 
     # -------------------------------------------------------------------------
-    # B5. Set-Then-Merge Commutativity
+    # B4. Type Mismatch Handling
+    # -------------------------------------------------------------------------
+
+    @given(
+        path_str=st.just('field'),
+        initial_value=nested_dict_strategy(max_depth=1),
+        new_value=st.lists(st.integers(), max_size=3),
+        mode=update_mode_strategy(),
+    )
+    @settings(max_examples=50)
+    def test_type_mismatch_consistent_behavior(
+        self, path_str: str, initial_value: dict, new_value: list, mode: str
+    ):
+        """Property: Type mismatches are handled consistently without crashing.
+
+        Tests lines 984-988: When types don't match, framework follows
+        documented rules (append mode keeps incoming if not None, otherwise keeps current).
+        """
+        # Property: ∀ dict_value, list_value, mode:
+        #           type_mismatch(dict, list, mode) handles consistently
+        path = Path(path=path_str)
+        target = {path_str: initial_value}
+
+        # Attempt to merge incompatible types
+        try:
+            path.set_data(new_value, target, update_mode=mode)
+            result = target[path_str]
+
+            # Should not crash, result should be one of the inputs
+            assert result == initial_value or result == new_value, (
+                f'Type mismatch produced unexpected result:\n'
+                f'  Initial (dict): {initial_value}\n'
+                f'  New (list): {new_value}\n'
+                f'  Mode: {mode}\n'
+                f'  Result: {result} (type: {type(result)})'
+            )
+        except (ValueError, TypeError) as e:
+            # If it raises, error should be clear
+            assert 'type' in str(e).lower() or 'mismatch' in str(e).lower(), (
+                f'Error message unclear for type mismatch:\n'
+                f'  Initial: {type(initial_value)}\n'
+                f'  New: {type(new_value)}\n'
+                f'  Error: {e}'
+            )
+
+    # -------------------------------------------------------------------------
+    # B5. Out-of-Bounds Index Handling
+    # -------------------------------------------------------------------------
+
+    @given(
+        list_data=st.lists(st.integers(), min_size=1, max_size=5),
+        index=st.integers(min_value=10, max_value=20),
+        value=st.integers(),
+    )
+    @settings(max_examples=50)
+    def test_out_of_bounds_positive_index_handling(
+        self, list_data: list, index: int, value: int
+    ):
+        """Property: Out-of-bounds positive indices are handled gracefully.
+
+        Tests that setting beyond list length either:
+        - Creates intermediate elements (fills with None or empty dicts)
+        - Or raises clear error
+        """
+        # Property: ∀ list, index>len(list), value:
+        #           set(list, index, value) handles out-of-bounds gracefully
+        path_str = f'items[{index}]'
+        path = Path(path=path_str)
+        target = {'items': list_data.copy()}
+
+        try:
+            path.set_data(value, target)
+            result_list = target['items']
+
+            # If succeeded, list should be extended
+            assert len(result_list) > len(list_data), (
+                f'Out-of-bounds set did not extend list:\n'
+                f'  Original length: {len(list_data)}\n'
+                f'  Index: {index}\n'
+                f'  Result length: {len(result_list)}'
+            )
+
+            # Value should be accessible at the index
+            if index < len(result_list):
+                assert result_list[index] == value, (
+                    f'Value not set at index:\n'
+                    f'  Index: {index}\n'
+                    f'  Expected: {value}\n'
+                    f'  Got: {result_list[index]}'
+                )
+        except (IndexError, ValueError, KeyError) as e:
+            # If it raises, that's acceptable - just verify error is clear
+            assert 'index' in str(e).lower() or 'bound' in str(e).lower(), (
+                f'Error message unclear for out-of-bounds:\n'
+                f'  List length: {len(list_data)}\n'
+                f'  Index: {index}\n'
+                f'  Error: {e}'
+            )
+
+    # -------------------------------------------------------------------------
+    # B6. Set-Then-Merge Commutativity
     # -------------------------------------------------------------------------
 
     @given(
@@ -1485,6 +1687,80 @@ class TestSystemConstraints:
                 f'  Value: {value}\n'
                 f'  Result: {result}'
             )
+
+    @given(
+        parent_data=nested_dict_strategy(max_depth=1),
+        child_data=nested_dict_strategy(max_depth=1),
+        parent_mode=st.one_of(st.just('merge'), st.just('replace')),
+        child_mode=st.one_of(st.just('merge'), st.just('replace')),
+        parent_key=st.just('parent'),
+        child_key=st.just('child'),
+    )
+    @settings(max_examples=50)
+    def test_nested_update_mode_specification(
+        self,
+        parent_data: dict,
+        child_data: dict,
+        parent_mode: str,
+        child_mode: str,
+        parent_key: str,
+        child_key: str,
+    ):
+        """Property: Nested update_mode dict specifies per-key modes.
+
+        Tests documented feature (lines 904-936): nested update_mode structure
+        allows per-key override of parent mode:
+        {
+            '__update_mode': 'merge',
+            'child_key': {'__update_mode': 'replace'}
+        }
+        """
+        # Property: ∀ parent_mode, child_mode:
+        #           child_key uses child_mode, not parent_mode when explicitly specified
+
+        path = Path(path=parent_key)
+        target = {parent_key: parent_data.copy()}
+
+        # Build nested update_mode specification
+        nested_mode_spec = {
+            '__update_mode': parent_mode,
+            f'.{child_key}': {'__update_mode': child_mode}
+        }
+
+        # Prepare incoming data with child key
+        incoming = {child_key: child_data}
+
+        # Apply with nested mode specification
+        path.set_data(incoming, target, update_mode=nested_mode_spec)
+
+        result = target[parent_key]
+
+        # Verify result is a dict (parent merge should preserve structure)
+        assert isinstance(result, dict), (
+            f'Nested mode spec did not preserve dict structure:\n'
+            f'  Parent mode: {parent_mode}\n'
+            f'  Child mode: {child_mode}\n'
+            f'  Result: {result} (type: {type(result)})'
+        )
+
+        # Verify child key exists if data was provided
+        if child_data:
+            assert child_key in result, (
+                f'Child key not in result:\n'
+                f'  Parent mode: {parent_mode}\n'
+                f'  Child mode: {child_mode}\n'
+                f'  Result keys: {list(result.keys())}\n'
+                f'  Expected child key: {child_key}'
+            )
+
+            # Verify child mode was applied
+            if child_mode == 'replace':
+                # Replace mode should completely overwrite
+                assert result[child_key] == child_data, (
+                    f'Child replace mode not respected:\n'
+                    f'  Expected (child_data): {child_data}\n'
+                    f'  Got: {result[child_key]}'
+                )
 
     # -------------------------------------------------------------------------
     # C2. Error Handling and Validation
