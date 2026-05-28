@@ -461,9 +461,12 @@ class TestOperationSemantics:
     @given(
         data=nested_dict_strategy(max_depth=2),
         mode=update_mode_strategy(),
+        path_str=st.just('@'),
     )
     @settings(max_examples=50)
-    def test_merge_identity_right_empty_incoming(self, data: dict, mode: str):
+    def test_merge_identity_right_empty_incoming(
+        self, data: dict, mode: str, path_str: str
+    ):
         """Property: merge(data, {}, mode) == data
 
         Algebraic structure: {} is the right identity element for merge (monoid).
@@ -471,7 +474,7 @@ class TestOperationSemantics:
         Tests that merging with empty dict is a no-op for all update modes.
         """
         # Property: ∀ data, mode: merge(data, {}, mode) == data (right identity)
-        path = Path(path='@')  # Root path
+        path = Path(path=path_str)
         target = data.copy() if isinstance(data, dict) else {'data': data}
 
         # Merge empty dict
@@ -490,9 +493,12 @@ class TestOperationSemantics:
             lambda d: all(v is not None for v in d.values()) if isinstance(d, dict) else d is not None
         ),
         mode=st.one_of(st.just('merge'), st.just('replace')),
+        path_str=st.just('content'),
     )
     @settings(max_examples=50)
-    def test_merge_identity_left_empty_existing(self, data: dict, mode: str):
+    def test_merge_identity_left_empty_existing(
+        self, data: dict, mode: str, path_str: str
+    ):
         """Property: merge({}, data, mode) == data
 
         Algebraic structure: {} is the left identity element for merge (monoid).
@@ -503,14 +509,14 @@ class TestOperationSemantics:
         Note: Tests at 'content' path level, not root '@' which has special semantics.
         """
         # Property: ∀ data (non-None values), mode: merge({}, data, mode) == data (left identity)
-        path = Path(path='content')
+        path = Path(path=path_str)
         target = {}
 
         # Merge data into empty target
         path.set_data(data, target, update_mode=mode)
 
         # Target should contain the data at the path
-        assert target.get('content') == data, (
+        assert target.get(path_str) == data, (
             f'Merge into empty dict did not preserve data (mode={mode}):\n'
             f'  Data: {data}\n'
             f'  Result: {target}'
@@ -520,10 +526,12 @@ class TestOperationSemantics:
         data1=nested_dict_strategy(max_depth=2),
         data2=nested_dict_strategy(max_depth=2),
         data3=nested_dict_strategy(max_depth=2),
+        path_str=st.just('@'),
+        mode=st.just('merge'),
     )
     @settings(max_examples=30)
     def test_merge_associativity(
-        self, data1: dict, data2: dict, data3: dict
+        self, data1: dict, data2: dict, data3: dict, path_str: str, mode: str
     ):
         """Property: merge(merge(a, b), c) == merge(a, merge(b, c))
 
@@ -532,18 +540,18 @@ class TestOperationSemantics:
         Tests that merge order doesn't matter (associativity law).
         """
         # Property: ∀ a, b, c: merge(merge(a, b), c) == merge(a, merge(b, c))
-        path = Path(path='@')
+        path = Path(path=path_str)
 
         # Left-associated: merge(merge(a, b), c)
         target_left = data1.copy()
-        path.set_data(data2, target_left, update_mode='merge')
-        path.set_data(data3, target_left, update_mode='merge')
+        path.set_data(data2, target_left, update_mode=mode)
+        path.set_data(data3, target_left, update_mode=mode)
 
         # Right-associated: merge(a, merge(b, c))
         temp = data2.copy()
-        path.set_data(data3, temp, update_mode='merge')
+        path.set_data(data3, temp, update_mode=mode)
         target_right = data1.copy()
-        path.set_data(temp, target_right, update_mode='merge')
+        path.set_data(temp, target_right, update_mode=mode)
 
         # Both should yield same result
         assert target_left == target_right, (
@@ -760,10 +768,12 @@ class TestOperationSemantics:
     @given(
         old_data=nested_dict_strategy(max_depth=2),
         new_data=nested_dict_strategy(max_depth=2),
+        path_str=st.just('data'),
+        mode=st.just('replace'),
     )
     @settings(max_examples=50)
     def test_replace_mode_overwrites_completely(
-        self, old_data: dict, new_data: dict
+        self, old_data: dict, new_data: dict, path_str: str, mode: str
     ):
         """Property: replace(old, new) contains no traces of old data.
 
@@ -772,18 +782,18 @@ class TestOperationSemantics:
         Tests that replace mode completely overwrites old data with new data.
         """
         # Property: ∀ old, new: replace(old, new) ∩ old == ∅ (for non-shared values)
-        path = Path(path='data')
-        target = {'data': old_data}
+        path = Path(path=path_str)
+        target = {path_str: old_data}
 
         # Replace with new data
-        path.set_data(new_data, target, update_mode='replace')
+        path.set_data(new_data, target, update_mode=mode)
 
         # Result should be exactly new_data, not merged
-        assert target['data'] == new_data, (
+        assert target[path_str] == new_data, (
             f'Replace mode did not overwrite completely:\n'
             f'  Old data: {old_data}\n'
             f'  New data: {new_data}\n'
-            f'  Result: {target["data"]}'
+            f'  Result: {target[path_str]}'
         )
 
     # TODO: Append mode has type-dependent polymorphic behavior that causes issues
@@ -824,21 +834,25 @@ class TestOperationSemantics:
 
     @given(
         new_value=st.integers(),
+        path_str=st.just('data'),
+        mode=st.just('append'),
     )
     @settings(max_examples=50)
-    def test_append_mode_uses_new_when_empty(self, new_value: int):
+    def test_append_mode_uses_new_when_empty(
+        self, new_value: int, path_str: str, mode: str
+    ):
         """Property: append(∅, new) == new (uses new data when no existing data).
 
         Tests that append mode uses new data when target path doesn't exist.
         """
         # Property: ∀ new: append(∅, new) == new
-        path = Path(path='data')
+        path = Path(path=path_str)
         target = {}
 
         # Append to empty target
-        path.set_data(new_value, target, update_mode='append')
+        path.set_data(new_value, target, update_mode=mode)
 
-        result = target.get('data')
+        result = target.get(path_str)
 
         # Result should be new_value
         assert result == new_value, (
@@ -850,10 +864,12 @@ class TestOperationSemantics:
     @given(
         old_list=st.lists(st.integers(), min_size=1, max_size=5),
         new_list=st.lists(st.integers(), min_size=1, max_size=5),
+        path_str=st.just('items'),
+        mode=st.just('merge@last'),
     )
     @settings(max_examples=50)
     def test_merge_at_last_aligns_final_elements(
-        self, old_list: list, new_list: list
+        self, old_list: list, new_list: list, path_str: str, mode: str
     ):
         """Property: merge@last aligns final elements of lists.
 
@@ -861,13 +877,13 @@ class TestOperationSemantics:
         extends appropriately.
         """
         # Property: ∀ list1, list2: merge@last(list1, list2)[-1] involves both list1[-1] and list2[-1]
-        path = Path(path='items')
-        target = {'items': old_list.copy()}
+        path = Path(path=path_str)
+        target = {path_str: old_list.copy()}
 
         # Merge with @last mode
-        path.set_data(new_list, target, update_mode='merge@last')
+        path.set_data(new_list, target, update_mode=mode)
 
-        result = target['items']
+        result = target[path_str]
 
         # Result should have length at least max of the two lists
         expected_min_length = max(len(old_list), len(new_list))
@@ -893,23 +909,25 @@ class TestOperationSemantics:
     @given(
         old_list=st.lists(st.integers(), min_size=1, max_size=5),
         new_list=st.lists(st.integers(), min_size=1, max_size=5),
+        path_str=st.just('items'),
+        mode=st.just('merge@start'),
     )
     @settings(max_examples=50)
     def test_merge_at_start_aligns_first_elements(
-        self, old_list: list, new_list: list
+        self, old_list: list, new_list: list, path_str: str, mode: str
     ):
         """Property: merge@start aligns first elements of lists.
 
         Tests that merge@start mode correctly aligns the first elements.
         """
         # Property: ∀ list1, list2: merge@start(list1, list2)[0] involves both list1[0] and list2[0]
-        path = Path(path='items')
-        target = {'items': old_list.copy()}
+        path = Path(path=path_str)
+        target = {path_str: old_list.copy()}
 
         # Merge with @start mode
-        path.set_data(new_list, target, update_mode='merge@start')
+        path.set_data(new_list, target, update_mode=mode)
 
-        result = target['items']
+        result = target[path_str]
 
         # Result should have length at least max of the two lists
         expected_min_length = max(len(old_list), len(new_list))
@@ -988,10 +1006,12 @@ class TestOperationSemantics:
     @given(
         old_data=nested_dict_strategy(max_depth=2),
         new_data=nested_dict_strategy(max_depth=2),
+        path_str=st.just('data'),
+        mode=st.just('replace'),
     )
     @settings(max_examples=50)
     def test_replace_mode_idempotence(
-        self, old_data: dict, new_data: dict
+        self, old_data: dict, new_data: dict, path_str: str, mode: str
     ):
         """Property: replace(replace(old, new), new) == replace(old, new)
 
@@ -1000,18 +1020,18 @@ class TestOperationSemantics:
         Tests that replacing twice with same value is same as replacing once.
         """
         # Property: ∀ old, new: replace(replace(old, new), new) == replace(old, new)
-        path = Path(path='data')
+        path = Path(path=path_str)
 
         # Replace once
-        target_once = {'data': old_data}
-        path.set_data(new_data, target_once, update_mode='replace')
-        result_once = target_once['data']
+        target_once = {path_str: old_data}
+        path.set_data(new_data, target_once, update_mode=mode)
+        result_once = target_once[path_str]
 
         # Replace twice
-        target_twice = {'data': old_data}
-        path.set_data(new_data, target_twice, update_mode='replace')
-        path.set_data(new_data, target_twice, update_mode='replace')
-        result_twice = target_twice['data']
+        target_twice = {path_str: old_data}
+        path.set_data(new_data, target_twice, update_mode=mode)
+        path.set_data(new_data, target_twice, update_mode=mode)
+        result_twice = target_twice[path_str]
 
         # Both should be identical
         assert result_once == result_twice, (
@@ -1025,23 +1045,25 @@ class TestOperationSemantics:
     @given(
         data1=nested_dict_strategy(max_depth=2),
         data2=nested_dict_strategy(max_depth=2),
+        path_str=st.just('content'),
+        mode=st.just('merge'),
     )
     @settings(max_examples=50)
     def test_merge_preserves_type_dict(
-        self, data1: dict, data2: dict
+        self, data1: dict, data2: dict, path_str: str, mode: str
     ):
         """Property: type(merge(dict, dict)) == dict
 
         Tests that merging dicts produces a dict.
         """
         # Property: ∀ dict1, dict2: type(merge(dict1, dict2)) == dict
-        path = Path(path='content')
+        path = Path(path=path_str)
         target = {}
 
-        path.set_data(data1, target, update_mode='merge')
-        path.set_data(data2, target, update_mode='merge')
+        path.set_data(data1, target, update_mode=mode)
+        path.set_data(data2, target, update_mode=mode)
 
-        result = target.get('content')
+        result = target.get(path_str)
 
         assert isinstance(result, dict), (
             f'Merge did not preserve dict type:\n'
@@ -1053,22 +1075,24 @@ class TestOperationSemantics:
     @given(
         list1=st.lists(st.integers(), max_size=3),
         list2=st.lists(st.integers(), max_size=3),
+        path_str=st.just('items'),
+        mode=st.just('merge'),
     )
     @settings(max_examples=50)
     def test_merge_preserves_type_list(
-        self, list1: list, list2: list
+        self, list1: list, list2: list, path_str: str, mode: str
     ):
         """Property: type(merge(list, list)) == list
 
         Tests that merging lists produces a list.
         """
         # Property: ∀ list1, list2: type(merge(list1, list2)) == list
-        path = Path(path='items')
-        target = {'items': list1}
+        path = Path(path=path_str)
+        target = {path_str: list1}
 
-        path.set_data(list2, target, update_mode='merge')
+        path.set_data(list2, target, update_mode=mode)
 
-        result = target['items']
+        result = target[path_str]
 
         assert isinstance(result, list), (
             f'Merge did not preserve list type:\n'
@@ -1080,23 +1104,25 @@ class TestOperationSemantics:
     @given(
         data1=nested_dict_strategy(max_depth=2),
         data2=nested_dict_strategy(max_depth=2),
+        path_str=st.just('content'),
+        mode=st.just('merge'),
     )
     @settings(max_examples=50)
     def test_merge_key_subset_property(
-        self, data1: dict, data2: dict
+        self, data1: dict, data2: dict, path_str: str, mode: str
     ):
         """Property: keys(merge(a, b)) ⊆ keys(a) ∪ keys(b)
 
         Tests that merge doesn't create phantom keys.
         """
         # Property: ∀ data1, data2: keys(merge(data1, data2)) ⊆ keys(data1) ∪ keys(data2)
-        path = Path(path='content')
+        path = Path(path=path_str)
         target = {}
 
-        path.set_data(data1, target, update_mode='merge')
-        path.set_data(data2, target, update_mode='merge')
+        path.set_data(data1, target, update_mode=mode)
+        path.set_data(data2, target, update_mode=mode)
 
-        result = target.get('content', {})
+        result = target.get(path_str, {})
 
         if isinstance(result, dict):
             result_keys = set(result.keys())
@@ -1117,24 +1143,25 @@ class TestOperationSemantics:
     @given(
         old_list=st.lists(st.integers(), min_size=1, max_size=5),
         new_list=st.lists(st.integers(), min_size=1, max_size=5),
+        path_str=st.just('items'),
     )
     @settings(max_examples=50)
     def test_merge_at_zero_equals_merge_at_start(
-        self, old_list: list, new_list: list
+        self, old_list: list, new_list: list, path_str: str
     ):
         """Property: merge@0 should behave like merge@start.
 
         Tests boundary condition for indexed merge modes.
         """
         # Property: ∀ list1, list2: merge@0(list1, list2) == merge@start(list1, list2)
-        path = Path(path='items')
+        path = Path(path=path_str)
 
         # merge@0
-        target_at_zero = {'items': old_list.copy()}
+        target_at_zero = {path_str: old_list.copy()}
         path.set_data(new_list, target_at_zero, update_mode='merge@0')
 
         # merge@start
-        target_at_start = {'items': old_list.copy()}
+        target_at_start = {path_str: old_list.copy()}
         path.set_data(new_list, target_at_start, update_mode='merge@start')
 
         # Results should be identical
@@ -1149,10 +1176,11 @@ class TestOperationSemantics:
     @given(
         old_list=st.lists(st.integers(), min_size=1, max_size=5),
         new_list=st.lists(st.integers(), min_size=1, max_size=5),
+        path_str=st.just('items'),
     )
     @settings(max_examples=50)
     def test_merge_at_length_extends_list(
-        self, old_list: list, new_list: list
+        self, old_list: list, new_list: list, path_str: str
     ):
         """Property: merge@{len(old_list)} produces valid result.
 
@@ -1160,14 +1188,14 @@ class TestOperationSemantics:
         Note: merge@N merges starting at index N, not concatenating.
         """
         # Property: ∀ list1, list2: merge@len(list1) produces list with len >= max(len(list1), len(list2))
-        path = Path(path='items')
-        target = {'items': old_list.copy()}
+        path = Path(path=path_str)
+        target = {path_str: old_list.copy()}
 
         # Merge at the length (one past last index)
         merge_index = len(old_list)
         path.set_data(new_list, target, update_mode=f'merge@{merge_index}')
 
-        result = target['items']
+        result = target[path_str]
 
         # Result should still be a list
         assert isinstance(result, list), (
@@ -1192,31 +1220,32 @@ class TestOperationSemantics:
     @given(
         old_list=st.lists(st.integers(), min_size=2, max_size=5),
         new_list=st.lists(st.integers(), min_size=1, max_size=3),
+        path_str=st.just('items'),
+        merge_index=st.just(-1),
     )
     @settings(max_examples=50)
     def test_merge_negative_index_wraps_correctly(
-        self, old_list: list, new_list: list
+        self, old_list: list, new_list: list, path_str: str, merge_index: int
     ):
         """Property: merge@{negative} wraps around correctly.
 
         Tests that negative indices are handled per list semantics.
         """
         # Property: ∀ list1, list2, n<0: merge@n handles negative index
-        path = Path(path='items')
-        target = {'items': old_list.copy()}
+        path = Path(path=path_str)
+        target = {path_str: old_list.copy()}
 
-        # Use negative index (e.g., -1, -2)
-        negative_index = -1
-        path.set_data(new_list, target, update_mode=f'merge@{negative_index}')
+        # Use negative index
+        path.set_data(new_list, target, update_mode=f'merge@{merge_index}')
 
-        result = target['items']
+        result = target[path_str]
 
         # Result should still be a valid list
         assert isinstance(result, list), (
             f'merge@{{negative}} did not produce list:\n'
             f'  Old list: {old_list}\n'
             f'  New list: {new_list}\n'
-            f'  Merge index: {negative_index}\n'
+            f'  Merge index: {merge_index}\n'
             f'  Result: {result} (type: {type(result)})'
         )
 
@@ -1274,10 +1303,12 @@ class TestOperationSemantics:
 
     @given(
         existing_value=st.integers(),
+        path_str=st.just('value'),
+        mode=st.just('replace'),
     )
     @settings(max_examples=50)
     def test_none_differs_from_empty_collections(
-        self, existing_value: int
+        self, existing_value: int, path_str: str, mode: str
     ):
         """Property: set_data(None) ≠ set_data({}) ≠ set_data([]).
 
@@ -1286,33 +1317,33 @@ class TestOperationSemantics:
         Tests that None is treated differently from explicit empty values.
         """
         # Property: ∀ existing: set(None) is no-op, but set({}) and set([]) modify
-        path = Path(path='value')
+        path = Path(path=path_str)
 
         # Test 1: None leaves existing value unchanged
-        target_none = {'value': existing_value}
-        path.set_data(None, target_none, update_mode='replace')
-        assert target_none['value'] == existing_value, (
+        target_none = {path_str: existing_value}
+        path.set_data(None, target_none, update_mode=mode)
+        assert target_none[path_str] == existing_value, (
             f'set_data(None) should be no-op:\n'
             f'  Expected: {existing_value}\n'
-            f'  Got: {target_none["value"]}'
+            f'  Got: {target_none[path_str]}'
         )
 
         # Test 2: Empty dict replaces existing value
-        target_empty_dict = {'value': existing_value}
-        path.set_data({}, target_empty_dict, update_mode='replace')
-        assert target_empty_dict['value'] == {}, (
+        target_empty_dict = {path_str: existing_value}
+        path.set_data({}, target_empty_dict, update_mode=mode)
+        assert target_empty_dict[path_str] == {}, (
             f'set_data({{}}) should set empty dict:\n'
             f'  Expected: {{}}\n'
-            f'  Got: {target_empty_dict["value"]}'
+            f'  Got: {target_empty_dict[path_str]}'
         )
 
         # Test 3: Empty list replaces existing value
-        target_empty_list = {'value': existing_value}
-        path.set_data([], target_empty_list, update_mode='replace')
-        assert target_empty_list['value'] == [], (
+        target_empty_list = {path_str: existing_value}
+        path.set_data([], target_empty_list, update_mode=mode)
+        assert target_empty_list[path_str] == [], (
             f'set_data([]) should set empty list:\n'
             f'  Expected: []\n'
-            f'  Got: {target_empty_list["value"]}'
+            f'  Got: {target_empty_list[path_str]}'
         )
 
     @given(
@@ -1415,10 +1446,17 @@ class TestSystemConstraints:
         parent_mode=update_mode_strategy(),
         child_mode=update_mode_strategy(),
         value=st.integers(),
+        path_str=st.just('data'),
+        existing_value=st.just(100),
     )
     @settings(max_examples=50)
     def test_child_mode_overrides_parent_mode(
-        self, parent_mode: str, child_mode: str, value: int
+        self,
+        parent_mode: str,
+        child_mode: str,
+        value: int,
+        path_str: str,
+        existing_value: int,
     ):
         """Property: Child update mode specification overrides parent mode.
 
@@ -1430,14 +1468,14 @@ class TestSystemConstraints:
         # This is more of an integration test, but we can verify the principle
         # by checking that set_data respects the mode parameter
 
-        path = Path(path='data')
-        target = {'data': 100}  # Existing value
+        path = Path(path=path_str)
+        target = {path_str: existing_value}
 
         # Set with child mode (should respect it)
         path.set_data(value, target, update_mode=child_mode)
 
         # Verify mode was applied (different modes produce different results)
-        result = target['data']
+        result = target[path_str]
 
         if child_mode == 'replace':
             # Replace should completely overwrite
@@ -1479,18 +1517,20 @@ class TestSystemConstraints:
 
     @given(
         value=st.integers(),
+        path_str=st.just('data'),
+        invalid_mode=st.just('invalid_mode_xyz'),
     )
     @settings(max_examples=30)
-    def test_invalid_mode_raises_clear_error(self, value: int):
+    def test_invalid_mode_raises_clear_error(
+        self, value: int, path_str: str, invalid_mode: str
+    ):
         """Property: Invalid update modes produce clear error messages.
 
         Tests that framework validates modes and provides helpful errors.
         """
         # Property: ∀ invalid_mode: set_data with invalid_mode raises clear error
-        path = Path(path='data')
+        path = Path(path=path_str)
         target = {}
-
-        invalid_mode = 'invalid_mode_xyz'
 
         # Should raise error with mode name in message
         # Note: Current implementation may not validate modes,
