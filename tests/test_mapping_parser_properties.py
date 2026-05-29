@@ -1638,6 +1638,90 @@ class TestMergeMonoid:
         )
 
     @given(
+        data=nested_dict_strategy(max_depth=2, allow_falsy=False),
+        path_str=st.just('x'),
+    )
+    @settings(max_examples=50)
+    def test_merge_mode_idempotence(self, data: dict, path_str: str):
+        """Property: merge(x, data); merge(x, data) == merge(x, data)
+
+        Algebraic structure: Merge is idempotent - merging same data twice is same
+        as merging once.
+
+        Tests that merge with same data is idempotent.
+        """
+        # Helper to normalize keys (handle framework's '.' prefix behavior)
+        def normalize_keys(d):
+            if not isinstance(d, dict):
+                return d
+            return {k.lstrip('.'): normalize_keys(v) for k, v in d.items()}
+
+        path = Path(path=path_str)
+
+        # Merge once
+        target_once = {}
+        path.set_data(data, target_once, update_mode='merge')
+
+        # Merge twice (same data)
+        target_twice = {}
+        path.set_data(data, target_twice, update_mode='merge')
+        path.set_data(data, target_twice, update_mode='merge')
+
+        # Normalize and compare
+        result_once = normalize_keys(target_once.get(path_str))
+        result_twice = normalize_keys(target_twice.get(path_str))
+
+        assert result_once == result_twice, (
+            f'Merge is not idempotent:\n'
+            f'  Data: {data}\n'
+            f'  Merge once (normalized): {result_once}\n'
+            f'  Merge twice (normalized): {result_twice}\n'
+            f'  Raw once: {target_once.get(path_str)}\n'
+            f'  Raw twice: {target_twice.get(path_str)}'
+        )
+
+    @given(
+        data=nested_dict_strategy(max_depth=2, allow_falsy=False),
+        path_str=st.just('x'),
+    )
+    @settings(max_examples=50)
+    def test_append_mode_idempotence_dict(self, data: dict, path_str: str):
+        """Property: append(x, data); append(x, data) == append(x, data)
+
+        Algebraic structure: Append is idempotent for dicts - appending same dict
+        twice is same as appending once (last value wins).
+
+        Note: Append mode for dicts behaves like merge (recursive merge keys).
+        """
+        # Helper to normalize keys
+        def normalize_keys(d):
+            if not isinstance(d, dict):
+                return d
+            return {k.lstrip('.'): normalize_keys(v) for k, v in d.items()}
+
+        path = Path(path=path_str)
+
+        # Append once
+        target_once = {}
+        path.set_data(data, target_once, update_mode='append')
+
+        # Append twice (same data)
+        target_twice = {}
+        path.set_data(data, target_twice, update_mode='append')
+        path.set_data(data, target_twice, update_mode='append')
+
+        # Normalize and compare
+        result_once = normalize_keys(target_once.get(path_str))
+        result_twice = normalize_keys(target_twice.get(path_str))
+
+        assert result_once == result_twice, (
+            f'Append (dict) is not idempotent:\n'
+            f'  Data: {data}\n'
+            f'  Append once (normalized): {result_once}\n'
+            f'  Append twice (normalized): {result_twice}'
+        )
+
+    @given(
         data1=nested_dict_strategy(max_depth=2),
         data2=nested_dict_strategy(max_depth=2),
         path_str=st.just('content'),
