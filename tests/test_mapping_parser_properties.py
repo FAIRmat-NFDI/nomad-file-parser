@@ -750,6 +750,165 @@ class TestOperationSemantics:
 # =============================================================================
 
 
+class TestFromDictHomomorphism:
+    """Tests verifying that from_dict() is a homomorphism from arrays to subsection lists.
+
+    A homomorphism is a structure-preserving map between algebraic structures.
+    For from_dict(), this means:
+    - Cardinality: len(array) == len(subsections) (when all elements valid)
+    - Order: array order preserved in subsection order
+    - Concatenation: from_dict([a, b]) ≈ from_dict([a]) + from_dict([b])
+
+    These properties ensure predictable array-to-subsection iteration behavior.
+    """
+
+    @given(
+        items=st.lists(
+            st.fixed_dictionaries({
+                # Generate dicts with at least one field matching Item schema
+                'value': st.integers(min_value=1, max_value=100),
+            }),
+            min_size=1,
+            max_size=10,
+        )
+    )
+    @settings(max_examples=50)
+    def test_from_dict_homomorphism_cardinality(self, items: list[dict]):
+        """Homomorphism Property: |from_dict(array)| = |array| (cardinality preservation)
+
+        Tests that from_dict() creates exactly one subsection per array element
+        (when all elements contain valid, non-empty data matching schema fields).
+        """
+        from nomad.metainfo import MSection, Quantity, SubSection
+
+        class Item(MSection):
+            value = Quantity(type=int)
+            name = Quantity(type=str)
+
+        class Container(MSection):
+            items = SubSection(sub_section=Item, repeats=True)
+
+        parser = create_test_parser(Container())
+        parser.from_dict({'items': items})
+
+        result = parser.data_object.items
+
+        # Homomorphism: cardinality is preserved
+        assert len(result) == len(items), (
+            f'Homomorphism cardinality law violated:\n'
+            f'  |from_dict(array)| should equal |array|\n'
+            f'  Input array length: {len(items)}\n'
+            f'  Output subsections: {len(result)}\n'
+            f'  Input: {items}'
+        )
+
+    @given(
+        items=st.lists(
+            st.fixed_dictionaries({
+                'value': st.integers(min_value=1, max_value=100)  # Always has 'value' key
+            }),
+            min_size=2,
+            max_size=10,
+        )
+    )
+    @settings(max_examples=50)
+    def test_from_dict_preserves_order(self, items: list[dict]):
+        """Homomorphism Property: Order preservation
+
+        Tests that from_dict() preserves array element order when creating subsections.
+        """
+        from nomad.metainfo import MSection, Quantity, SubSection
+
+        class Item(MSection):
+            value = Quantity(type=int)
+
+        class Container(MSection):
+            items = SubSection(sub_section=Item, repeats=True)
+
+        parser = create_test_parser(Container())
+        parser.from_dict({'items': items})
+
+        result = parser.data_object.items
+
+        # Homomorphism: order is preserved
+        for i, (input_item, output_item) in enumerate(zip(items, result)):
+            assert output_item.value == input_item['value'], (
+                f'Order preservation violated at index {i}:\n'
+                f'  Input item: {input_item}\n'
+                f'  Output item value: {output_item.value}\n'
+                f'  Expected: {input_item["value"]}'
+            )
+
+    @given(
+        first_batch=st.lists(
+            st.fixed_dictionaries({
+                'value': st.integers(min_value=1, max_value=50)
+            }),
+            min_size=1,
+            max_size=5,
+        ),
+        second_batch=st.lists(
+            st.fixed_dictionaries({
+                'value': st.integers(min_value=51, max_value=100)
+            }),
+            min_size=1,
+            max_size=5,
+        ),
+    )
+    @settings(max_examples=30)
+    def test_from_dict_homomorphism_concatenation(
+        self, first_batch: list[dict], second_batch: list[dict]
+    ):
+        """Homomorphism Property: from_dict([a] + [b]) ≈ from_dict([a]) + from_dict([b])
+
+        Tests that processing concatenated arrays produces same result as
+        concatenating individually processed arrays (modulo empty filtering).
+        """
+        from nomad.metainfo import MSection, Quantity, SubSection
+
+        class Item(MSection):
+            value = Quantity(type=int)
+
+        class Container(MSection):
+            items = SubSection(sub_section=Item, repeats=True)
+
+        # Process concatenated array
+        parser_combined = create_test_parser(Container())
+        parser_combined.from_dict({'items': first_batch + second_batch})
+        result_combined = parser_combined.data_object.items
+
+        # Process separately and concatenate results
+        parser_first = create_test_parser(Container())
+        parser_first.from_dict({'items': first_batch})
+        result_first = parser_first.data_object.items
+
+        parser_second = create_test_parser(Container())
+        parser_second.from_dict({'items': second_batch})
+        result_second = parser_second.data_object.items
+
+        # Homomorphism: concatenation commutes with from_dict
+        assert len(result_combined) == len(result_first) + len(result_second), (
+            f'Concatenation homomorphism violated:\n'
+            f'  |from_dict(a + b)| should equal |from_dict(a)| + |from_dict(b)|\n'
+            f'  Combined length: {len(result_combined)}\n'
+            f'  First batch length: {len(result_first)}\n'
+            f'  Second batch length: {len(result_second)}\n'
+            f'  Expected: {len(result_first) + len(result_second)}'
+        )
+
+        # Values should match in order
+        combined_values = [item.value for item in result_combined]
+        expected_values = [item.value for item in result_first] + [
+            item.value for item in result_second
+        ]
+
+        assert combined_values == expected_values, (
+            f'Concatenation order violated:\n'
+            f'  Combined: {combined_values}\n'
+            f'  Expected: {expected_values}'
+        )
+
+
 class TestMergeMonoid:
     """Tests verifying that dict merge forms a monoid.
 
