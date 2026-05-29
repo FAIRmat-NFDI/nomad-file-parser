@@ -17,7 +17,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from nomad_file_parser.mapping_parser import Path, PathParser, BaseMapper, Mapper
+from nomad_file_parser.mapping_parser import Path, PathParser, BaseMapper, Mapper, MappingParser
 
 
 # =============================================================================
@@ -2127,6 +2127,26 @@ def create_test_parser(data_object):
     parser = MetainfoParser()
     parser.data_object = data_object
     return parser
+
+
+class DictParser(MappingParser):
+    """Simple parser for in-memory dict data (for integration testing).
+
+    Provides a minimal source parser that holds dict data without file I/O,
+    enabling fast property-based testing of the annotation→mapper→transformer pipeline.
+    """
+
+    def load_file(self):
+        """Load file - not used for in-memory data."""
+        return self._data
+
+    def to_dict(self, **kwargs):
+        """Return the dict data."""
+        return self._data if self._data else {}
+
+    def from_dict(self, dct):
+        """Set the dict data."""
+        self._data = dct
 
 
 class TestRepeatingSubsectionsUnit:
