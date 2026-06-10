@@ -14,6 +14,7 @@
 
 import bz2
 import gzip
+import logging
 import lzma
 import os
 import tarfile
@@ -23,10 +24,6 @@ from contextlib import contextmanager
 from typing import IO, Any
 
 import pint
-
-from nomad.datamodel import EntryArchive
-from nomad.metainfo import MSection, SubSection
-from nomad.utils import get_logger
 
 
 class FileParser(ABC):
@@ -56,7 +53,7 @@ class FileParser(ABC):
             self._mainfile = mainfile.name
             self._mainfile_obj = mainfile
         self._open: Callable = open
-        self.logger = logger if logger is not None else get_logger(__name__)
+        self.logger = logger if logger is not None else logging.getLogger(__name__)
         # a key is necessary for xml parsers, where parsing is done dynamically
         self._key: str = None
         self._kwargs: dict[str, Any] = {}
@@ -216,7 +213,7 @@ class FileParser(ABC):
             results[key] = val
         return results
 
-    def write_to_archive(self, section: MSection):
+    def write_to_archive(self, section: Any):
         """
         Wrapper for the m_from_dict functionality of msection to write the parser
         results to an archive section.
@@ -274,9 +271,9 @@ class FileParser(ABC):
 
 class ArchiveWriter(ABC):
     mainfile: str | None = None
-    archive: EntryArchive | None = None
+    archive: Any | None = None
     logger = None
-    child_archives: dict[str, EntryArchive] | None = None
+    child_archives: dict[str, Any] | None = None
 
     def get_mainfile_keys(self, filename: str, decoded_buffer: str) -> bool | list[str]:
         """
@@ -286,7 +283,7 @@ class ArchiveWriter(ABC):
         return True
 
     # TODO replace with MSection.m_update_from_dict once it takes in type Quantity?
-    def parse_section(self, data: dict[str, Any], root: MSection) -> None:
+    def parse_section(self, data: dict[str, Any], root: Any) -> None:
         """
         Write the quantities in data into an archive section.
         """
@@ -295,7 +292,7 @@ class ArchiveWriter(ABC):
                 continue
 
             section = getattr(root.m_def.section_cls, key)
-            if isinstance(section, SubSection):
+            if hasattr(section, 'sub_section') and hasattr(section, 'repeats'):
                 for val_n in [val] if isinstance(val, dict) else val:
                     sub_section = section.sub_section.section_cls()
                     root.m_add_sub_section(section, sub_section)
@@ -322,20 +319,20 @@ class ArchiveWriter(ABC):
         self.archive.m_update_from_dict(self.to_dict())
 
     def write(
-        self, mainfile: str, archive: EntryArchive, logger=None, child_archives=None
+        self, mainfile: str, archive: Any, logger=None, child_archives=None
     ) -> None:
         """
         Wrapper to write_to_archive method.
         """
         self.mainfile = mainfile
         self.archive = archive
-        self.logger = logger if logger else get_logger(__name__)
+        self.logger = logger if logger else logging.getLogger(__name__)
         self.child_archives = child_archives
 
         self.write_to_archive()
 
     def parse(
-        self, mainfile: str, archive: EntryArchive, logger=None, child_archives=None
+        self, mainfile: str, archive: Any, logger=None, child_archives=None
     ) -> None:
         """
         Wraps write method for backwards compatibility.

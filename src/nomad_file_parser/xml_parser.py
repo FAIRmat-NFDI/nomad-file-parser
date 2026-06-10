@@ -20,7 +20,7 @@ from xml.etree import ElementTree
 import numpy as np
 from lxml import etree
 
-from nomad.parsing.file_parser import FileParser
+from .file_parser import FileParser
 
 
 class XMLParser(FileParser):
@@ -133,7 +133,7 @@ class XMLParser(FileParser):
                     val = re.sub(re_float, r'\1e\2', val)
                     if val.isdecimal():
                         val = int(val)
-                    elif val == 'true' or val == 'false':
+                    elif val in ['true', 'false']:
                         val = val == 'true'
                     else:
                         try:
