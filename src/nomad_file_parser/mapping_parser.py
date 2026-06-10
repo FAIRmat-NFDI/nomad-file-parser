@@ -1,6 +1,7 @@
 import bz2
 import gzip
 import json
+import logging
 import lzma
 import os
 import re
@@ -13,17 +14,12 @@ import h5py
 import jmespath
 import jmespath.visitor
 import numpy as np
+import pint
 from jsonpath_ng.parser import JsonPathParser
 from lxml import etree
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
-from nomad.datamodel import EntryArchive
-from nomad.datamodel.metainfo.annotations import Mapper as MapperAnnotation
-from nomad.metainfo import MSection, SubSection
-from nomad.parsing.file_parser import TextParser as TextFileParser
-from nomad.parsing.parser import ArchiveParser
-from nomad.units import ureg
-from nomad.utils import get_logger
+from .text_parser import TextParser as TextFileParser
 
 """
 Mapping parser framework for declarative data transformation and file format conversion.
@@ -257,7 +253,7 @@ class JmespathOptions(jmespath.visitor.Options):
         super().__init__(**kwargs)
 
 
-LOGGER = get_logger(__name__)
+LOGGER = logging.getLogger(__name__)
 
 
 def _normalize_update_mode_spec(update_mode: Any) -> dict[str, Any]:
@@ -1252,7 +1248,9 @@ class BaseMapper(BaseModel):
 
     @staticmethod
     def from_dict(
-        dct: dict[str, Any], parent: 'BaseMapper | None' = None
+        dct: dict[str, Any],
+        parent: 'BaseMapper | None' = None,
+        logger: logging.Logger = LOGGER,
     ) -> 'BaseMapper':
         """Factory method to construct mapper objects from dictionary specifications.
 
@@ -1383,7 +1381,7 @@ class BaseMapper(BaseModel):
             if mapper and isinstance(mapper[0], dict):
                 obj = Mapper()
         else:
-            LOGGER.error('Unknown mapper type.')
+            logger.error('Unknown mapper type.')
 
         for key in ['indices', 'remove', 'cache', 'update_mode']:
             if dct.get(key) is not None:
@@ -1908,7 +1906,7 @@ class MappingParser(ABC):
     parse_only_required: bool = False
     attribute_prefix: str = '@'
     value_key: str = '__value'
-    logger = get_logger(__name__)
+    logger = LOGGER
 
     def __init__(self, **kwargs):
         """Initialize parser with optional filepath, data_object, or mapper.
@@ -2308,7 +2306,7 @@ class MetainfoTransformer(MetainfoBaseMapper, Transformer):
             path = Path(path=self.search)
             value = path.get_data(value)
         if self.unit is not None and value is not None and not hasattr(value, 'units'):
-            value = value * ureg(self.unit)
+            value = value * pint.Unit(self.unit)
         return value
 
 
@@ -2361,17 +2359,12 @@ class MetainfoParser(MappingParser):
         self._annotation_key = value
         self._mapper = None
 
-    def load_file(self) -> MSection:
+    def load_file(self) -> Any:
         if self._data_object is not None:
             with open(self.filepath) as f:
                 return self._data_object.m_from_dict(json.load(f))
         elif self.filepath:
-            try:
-                archive = EntryArchive()
-                ArchiveParser().parse(self.filepath, archive)
-                return archive
-            except Exception:
-                self.logger.errror('Error loading archive file.')
+            self.logger.errror('Error loading archive file.')
         return None
 
     def to_dict(self, **kwargs) -> dict[str | int, Any]:
@@ -2379,7 +2372,11 @@ class MetainfoParser(MappingParser):
             return self.data_object.m_to_dict()
         return {}
 
-    def from_dict(self, dct: dict[str, Any], root: MSection | None = None) -> None:
+    @staticmethod
+    def _is_sub_section(section: Any) -> bool:
+        return hasattr(section, 'sub_section') and hasattr(section, 'repeats')
+
+    def from_dict(self, dct: dict[str, Any], root: Any = None) -> None:
         """Deserialize dictionary into metainfo section instances.
 
         Note: At this stage, leading dots have already been stripped from keys.
@@ -2407,7 +2404,8 @@ class MetainfoParser(MappingParser):
                 continue
 
             section = getattr(root.m_def.section_cls, key)
-            if isinstance(section, SubSection):
+            is_subsection = MetainfoParser._is_sub_section(section)
+            if is_subsection:
                 val_list = [val] if isinstance(val, dict) else val
 
                 # Track indices of empty sub-sections to remove after iteration
@@ -2426,7 +2424,7 @@ class MetainfoParser(MappingParser):
                                 section_def = isection
                                 break
 
-                    quantities = section_def.all_quantities
+                    # quantities = section_def.all_quantities
                     try:
                         sub_section = root.m_get_sub_section(section, n)
                     except Exception:
@@ -2505,7 +2503,7 @@ class MetainfoParser(MappingParser):
 
         def fill_mapper(
             mapper: dict[str, Any],
-            annotation: MapperAnnotation,
+            annotation: Any,
             attributes: list[str],
         ) -> None:
             for key in attributes:
@@ -2514,27 +2512,24 @@ class MetainfoParser(MappingParser):
                     mapper.setdefault(key, value)
 
         def build_section_mapper(
-            section: SubSection | MSection, level: int = 0, m_def: str | None = None
+            section: Any, level: int = 0, m_def: str | None = None
         ) -> dict[str, Any]:
             mapper: dict[str, Any] = {}
             # Stop recursion for self-referential sections (e.g., Section.parent: Section)
             if level >= (max_level or self.max_nested_level):
                 return mapper
 
+            is_sub_section = MetainfoParser._is_sub_section(section)
             # Get section definition: SubSection.sub_section or MSection.m_def
-            section_def = (
-                section.sub_section
-                if isinstance(section, SubSection)
-                else section.m_def
-            )
+            section_def = section.sub_section if is_sub_section else section.m_def
 
             if not section_def:
                 return mapper
 
             # Phase 1: Find annotation via 3-level lookup
             # Level 1: Try SubSection itself (if applicable)
-            annotation: MapperAnnotation = (
-                (section if isinstance(section, SubSection) else section_def)
+            annotation = (
+                (section if is_sub_section else section_def)
                 .m_get_annotations(MAPPING_ANNOTATION_KEY, {})
                 .get(self.annotation_key)
             )
@@ -2545,7 +2540,7 @@ class MetainfoParser(MappingParser):
                     MAPPING_ANNOTATION_KEY, {}
                 ).get(self.annotation_key)
 
-            if isinstance(section, SubSection) and not annotation:
+            if is_sub_section and not annotation:
                 # Level 3: Search all inheriting sections for annotations (polymorphism)
                 for inheriting_section in section_def.all_inheriting_sections or []:
                     section_annotation = inheriting_section.m_get_annotations(
@@ -3036,8 +3031,8 @@ class TextParser(MappingParser):
 
 
 if __name__ == '__main__':
-    from nomad.parsing.file_parser.mapping_parser import MetainfoParser
-    from tests.parsing.test_mapping_parser import (
+    from nomad_file_parser.mapping_parser import MetainfoParser
+    from tests.test_mapping_parser import (
         BSection,
         ExampleHDF5Parser,
         ExampleSection,

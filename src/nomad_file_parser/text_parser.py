@@ -14,6 +14,7 @@
 
 
 import io
+import logging
 import mmap
 import re
 from collections.abc import Callable
@@ -22,9 +23,7 @@ from typing import Any
 import numpy as np
 import pint
 
-from nomad.metainfo import Quantity as mQuantity
-from nomad.parsing.file_parser import FileParser
-from nomad.utils import get_logger
+from .file_parser import FileParser
 
 
 class ParsePattern:
@@ -110,7 +109,7 @@ class Quantity:
 
     def __init__(
         self,
-        quantity: str | mQuantity,
+        quantity: Any,
         re_pattern: str | list | ParsePattern,
         **kwargs,
     ):
@@ -123,7 +122,7 @@ class Quantity:
             self.dtype = None
             self.unit = None
             self.shape = None
-        elif isinstance(quantity, mQuantity):
+        else:
             self.name = quantity.name
             self.dtype = (
                 quantity.type.type
@@ -288,7 +287,7 @@ class TextParser(FileParser):
         **kwargs,
     ):
         if logger is None:
-            logger = get_logger(__name__)
+            logger = logging.getLogger(__name__)
         super().__init__(mainfile, logger=logger, open=kwargs.get('open', None))
         self._quantities: list[Quantity] = quantities
         self.findall: bool = kwargs.get('findall', True)
@@ -633,12 +632,11 @@ class TextParser(FileParser):
 
                     if quantity.multiline:
                         match = re.search(quantity.re_patterns[n_re[0]], lines)
+                    # faster matching
+                    elif quantity.exact_match:
+                        match = re.match(quantity.re_patterns[n_re[0]], line)
                     else:
-                        # faster matching
-                        if quantity.exact_match:
-                            match = re.match(quantity.re_patterns[n_re[0]], line)
-                        else:
-                            match = re.search(quantity.re_patterns[n_re[0]], line)
+                        match = re.search(quantity.re_patterns[n_re[0]], line)
                     if match:
                         lines = b''
                         if quantity.sub_parser:
@@ -707,7 +705,8 @@ class TextParser(FileParser):
 
     def parse(self, key=None):
         """
-        Triggers parsing of quantity with name key, if key is None will parse all quantities.
+        Triggers parsing of quantity with name key, if key is None will parse all
+        quantities.
 
         Returns file parser.
         """
