@@ -19,7 +19,7 @@ from jsonpath_ng.parser import JsonPathParser
 from lxml import etree
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
-from .file_parser import TextParser as TextFileParser
+from .text_parser import TextParser as TextFileParser
 
 """
 Mapping parser framework for declarative data transformation and file format conversion.
@@ -2364,15 +2364,7 @@ class MetainfoParser(MappingParser):
             with open(self.filepath) as f:
                 return self._data_object.m_from_dict(json.load(f))
         elif self.filepath:
-            try:
-                from nomad.datamodel import EntryArchive  # noqa
-                from nomad.parsing.parser import ArchiveParser  # noqa
-
-                archive = EntryArchive()
-                ArchiveParser().parse(self.filepath, archive)
-                return archive
-            except Exception:
-                self.logger.errror('Error loading archive file.')
+            self.logger.errror('Error loading archive file.')
         return None
 
     def to_dict(self, **kwargs) -> dict[str | int, Any]:
@@ -2432,7 +2424,7 @@ class MetainfoParser(MappingParser):
                                 section_def = isection
                                 break
 
-                    #quantities = section_def.all_quantities
+                    # quantities = section_def.all_quantities
                     try:
                         sub_section = root.m_get_sub_section(section, n)
                     except Exception:
@@ -3039,13 +3031,12 @@ class TextParser(MappingParser):
 
 
 if __name__ == '__main__':
-    from tests.parsing.test_mapping_parser import (
+    from nomad_file_parser.mapping_parser import MetainfoParser
+    from tests.test_mapping_parser import (
         BSection,
         ExampleHDF5Parser,
         ExampleSection,
     )
-
-    from nomad_file_parser.mapping_parser import MetainfoParser
 
     with MetainfoParser() as archive_parser, ExampleHDF5Parser() as hdf5_parser:
         archive_parser.annotation_key = 'hdf5'
