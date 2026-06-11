@@ -2540,6 +2540,10 @@ class MetainfoParser(MappingParser):
                     MAPPING_ANNOTATION_KEY, {}
                 ).get(self.annotation_key)
 
+            if is_sub_section and section.more.get('mapper_m_def'):
+                annotation = None
+                m_def = section.more.pop('mapper_m_def')
+
             if is_sub_section and not annotation:
                 # Level 3: Search all inheriting sections for annotations (polymorphism)
                 for inheriting_section in section_def.all_inheriting_sections or []:
