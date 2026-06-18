@@ -228,23 +228,54 @@ class TestDataIntegrity:
     # -------------------------------------------------------------------------
 
     @given(
-        path_str=simple_path_strategy(max_depth=3),
-        value=st.one_of(
-            st.integers(),
-            st.text(alphabet=string.ascii_letters, max_size=20),
-            st.floats(allow_nan=False, allow_infinity=False),
-        ),
+        path_config=st.one_of(
+            # Simple paths with multiple value types (shallow)
+            st.tuples(
+                st.just('simple'),
+                simple_path_strategy(max_depth=3),
+                st.one_of(
+                    st.integers(),
+                    st.text(alphabet=string.ascii_letters, max_size=20),
+                    st.floats(allow_nan=False, allow_infinity=False),
+                ),
+            ),
+            # Indexed paths with integers (shallow)
+            st.tuples(
+                st.just('indexed'),
+                path_with_indices_strategy(max_depth=2),
+                st.integers(),
+            ),
+            # Deep paths with integers (stress test)
+            st.tuples(
+                st.just('deep'),
+                simple_path_strategy(max_depth=10),
+                st.integers(),
+            ),
+        )
     )
-    @settings(max_examples=100)
-    def test_get_set_inverse_simple_paths(self, path_str: str, value: Any):
+    @settings(max_examples=150)  # Combined budget from original tests (100+50+50)
+    def test_get_set_inverse_comprehensive(self, path_config):
         """Property: get(set(data, path, value), path) == value
 
         Algebraic structure: set and get form a left inverse pair.
 
-        Tests that setting a value then getting it returns the same value
-        for simple paths without indices.
+        This comprehensive test verifies round-trip behavior across three scenarios:
+        1. Simple paths (depth ≤3) with multiple value types (int, str, float)
+        2. Indexed paths (depth ≤2) with array indices like 'items[0].data[1]'
+        3. Deep nesting (depth ≤10) as a stress test for recursive structures
+
+        Note on wildcard paths:
+        This test does NOT include wildcard projections (e.g., 'items[*].value') because:
+        - Wildcards are delegated to the battle-tested JMESPath library
+        - They return multiple values (projections), breaking the round-trip property
+        - They're indirectly tested through array iteration in repeating subsections
+        - The semantic mismatch: set(data, 'items[*]', x) is ambiguous
+        - Coverage gap is <2% with low bug risk (see mapping-parser-property-based-testing-specs.md)
+
+        Property formula:
+        ∀ data, path, value: get(set(data, path, value), path) == value
         """
-        # Property: ∀ data, path, value: get(set(data, path, value), path) == value
+        path_type, path_str, value = path_config
         path = Path(path=path_str)
         target = {}
 
@@ -254,71 +285,20 @@ class TestDataIntegrity:
         # Get it back
         retrieved = path.get_data(target)
 
+        # Build context for error message
+        if path_type == 'deep':
+            depth = len(path_str.split('.'))
+            context = f' (depth={depth})'
+        else:
+            context = f' ({path_type} path)'
+
         assert retrieved == value, (
-            f'Round-trip failed for path {path_str}:\n'
-            f'  Original value: {value}\n'
-            f'  Retrieved value: {retrieved}\n'
+            f'Round-trip failed for {path_type} path {path_str}{context}:\n'
+            f'  Original value: {value} (type: {type(value).__name__})\n'
+            f'  Retrieved value: {retrieved} (type: {type(retrieved).__name__})\n'
             f'  Target dict: {target}'
         )
 
-    @given(
-        path_str=path_with_indices_strategy(max_depth=2),
-        value=st.integers(),
-    )
-    @settings(max_examples=50)
-    def test_get_set_inverse_with_indices(self, path_str: str, value: int):
-        """Property: get(set(data, path, value), path) == value
-
-        Algebraic structure: set and get form a left inverse pair.
-
-        Tests round-trip with array indices.
-        """
-        # Property: ∀ data, path[i], value: get(set(data, path[i], value), path[i]) == value
-        path = Path(path=path_str)
-        target = {}
-
-        # Set the value
-        path.set_data(value, target)
-
-        # Get it back
-        retrieved = path.get_data(target)
-
-        assert retrieved == value, (
-            f'Round-trip failed for indexed path {path_str}:\n'
-            f'  Original value: {value}\n'
-            f'  Retrieved value: {retrieved}\n'
-            f'  Target dict: {target}'
-        )
-
-    @given(
-        path_str=simple_path_strategy(max_depth=10),
-        value=st.integers(),
-    )
-    @settings(max_examples=50)
-    def test_get_set_inverse_deep_nesting(self, path_str: str, value: int):
-        """Property: get(set(data, deep_path, value), deep_path) == value
-
-        Tests round-trip with deeply nested paths (up to 10 levels).
-
-        Rationale: Research shows pain points at 3+ levels, stress test at 10.
-        """
-        # Property: ∀ path (depth≤10), value: get(set(data, path, v), path) == v
-        path = Path(path=path_str)
-        target = {}
-
-        # Set the value
-        path.set_data(value, target)
-
-        # Get it back
-        retrieved = path.get_data(target)
-
-        assert retrieved == value, (
-            f'Round-trip failed for deep path {path_str}:\n'
-            f'  Path depth: {len(path_str.split("."))}\n'
-            f'  Original value: {value}\n'
-            f'  Retrieved value: {retrieved}\n'
-            f'  Target dict: {target}'
-        )
 
     @given(
         depth=st.integers(min_value=20, max_value=30),
