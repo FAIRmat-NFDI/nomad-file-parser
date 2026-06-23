@@ -26,74 +26,33 @@ from nomad.metainfo import Quantity, Section
 class TestAnnotationConstraints:
     """Test what types of values can be used in mapping annotations."""
 
-    def test_lambda_functions_in_annotations(self):
+    def test_lambda_functions_work_but_not_serializable(self):
         """
-        Test: Can lambda functions be used in mapping annotations?
+        Empirical finding: Lambda functions work in str_operation but aren't JSON-serializable.
 
-        Hypothesis 1: λ functions might work if not serialized
-        Hypothesis 2: λ functions might be silently ignored
-        Hypothesis 3: λ functions might cause runtime errors
+        Property: ∀λ ∈ LambdaFunctions:
+            WorksIn(λ, str_operation) ∧ ¬Serializable(λ, JSON)
+
+        This means:
+        - Lambdas CAN be used for transformations
+        - But annotations containing lambdas cannot be persisted to JSON
+        - This is acceptable for parser definitions which are in Python code
         """
-        # Test 1: Can we create a Mapper with a lambda?
-        try:
-            mapper = Mapper(
-                mapper='.value',
-                transform=lambda x: x * 2
-            )
-            # If this works, lambdas ARE supported in Mapper objects
-            assert hasattr(mapper, 'transform')
-            assert callable(mapper.transform) if hasattr(mapper, 'transform') else True
-            lambda_in_mapper_works = True
-        except Exception as e:
-            lambda_in_mapper_works = False
+        # Test 1: Lambdas work in str_operation (proven in test_lambda_actually_works.py)
+        from nomad.parsing.file_parser.text_parser import Quantity as ParserQuantity
 
-        # Test 2: Can we use it in an annotation?
-        try:
-            from nomad.metainfo import Quantity
-            q = Quantity(type=float)
-            q.m_annotations = {
-                MAPPING_ANNOTATION_KEY: {
-                    'text': Mapper(
-                        mapper='.value',
-                        transform=lambda x: x * 2
-                    )
-                }
-            }
-            lambda_in_annotation_works = True
-        except Exception:
-            lambda_in_annotation_works = False
+        # This works!
+        q = ParserQuantity(
+            'test',
+            r'value: (\d+)',
+            str_operation=lambda x: float(x) * 2
+        )
+        assert callable(q.str_operation)
 
-        # Test 3: JSON serialization still fails
-        if lambda_in_mapper_works:
-            import json
-            with pytest.raises(TypeError):
-                # Even if Mapper accepts it, JSON serialization should fail
-                json.dumps({'transform': lambda x: x * 2})
-
-        # Document findings
-        print(f"Lambda in Mapper: {lambda_in_mapper_works}")
-        print(f"Lambda in annotation: {lambda_in_annotation_works}")
-
-    def test_regular_functions_not_serializable(self):
-        """
-        Property: ∀f ∈ Functions: ¬Serializable(f, JSON)
-
-        Generalizes from lambda to all functions.
-        """
-        def my_transform(x):
-            return x * 2
-
-        with pytest.raises((TypeError, ValueError, AttributeError)):
-            annotation = {
-                MAPPING_ANNOTATION_KEY: {
-                    'text': Mapper(
-                        mapper='.value',
-                        transform=my_transform  # This should not work either
-                    )
-                }
-            }
-            import json
-            json.dumps(annotation)
+        # Test 2: But they're not JSON serializable
+        import json
+        with pytest.raises(TypeError):
+            json.dumps({'transform': lambda x: x * 2})
 
     @given(
         mapper_path=st.text(
@@ -361,89 +320,68 @@ class TestAnnotationSerialization:
 class TestLambdaFunctionalityInPractice:
     """Test if lambda functions actually work in practice with the parser."""
 
-    def test_lambda_transform_in_real_parsing(self):
+    def test_lambda_executes_in_text_parser(self):
         """
-        Empirical test: Do lambda transforms actually work in parsing?
+        Empirical proof: Lambda functions execute in TextParser.
 
-        Instead of assuming they don't work, let's try them.
+        Property: ∀λ ∈ LambdaFunctions, ∀x ∈ InputData:
+            Parse(Quantity(str_operation=λ), x) = λ(x)
+
+        This test proves lambdas aren't just accepted but actually execute.
         """
-        from nomad.metainfo import Section, Quantity
-        from nomad.parsing.file_parser.mapping_parser import MetainfoParser
+        import tempfile
+        from nomad.parsing.file_parser.text_parser import Quantity as ParserQuantity, TextParser
 
-        # Create a test schema with lambda transform
-        class TestSection(Section):
-            value = Quantity(type=float)
-            doubled_value = Quantity(type=float)
-
-        # Try adding lambda transform
-        TestSection.doubled_value.m_annotations = {
-            MAPPING_ANNOTATION_KEY: {
-                'text': Mapper(
-                    mapper='.value',
-                    transform=lambda x: x * 2 if x else 0
-                )
-            }
-        }
-
-        # Create parser and test data
-        class TestParser(MetainfoParser):
-            pass
-
-        parser = TestParser()
-        test_data = {'value': 5.0}
-
-        # Try to parse
-        try:
-            section = TestSection()
-            # Would the lambda be called?
-            # This tests if the framework actually uses lambda transforms
-            parser_works_with_lambda = True
-            result = "Lambda accepted but behavior unknown"
-        except Exception as e:
-            parser_works_with_lambda = False
-            result = str(e)
-
-        assert parser_works_with_lambda or not parser_works_with_lambda  # Document either way
-        print(f"Parser with lambda: {parser_works_with_lambda}, Result: {result}")
-
-    def test_str_operation_vs_lambda(self):
-        """
-        Test: Compare str_operation (named function) vs lambda.
-
-        The framework uses str_operation in parsers - do lambdas work there?
-        """
-        from nomad.parsing.file_parser.text_parser import Quantity as ParserQuantity
-
-        # Test 1: Named function (standard pattern)
-        def named_transform(x):
-            return x * 2
-
-        q1 = ParserQuantity(
-            'test_named',
-            r'value: (\d+)',
-            str_operation=named_transform
-        )
-
-        # Test 2: Lambda function (experimental)
-        try:
-            q2 = ParserQuantity(
-                'test_lambda',
-                r'value: (\d+)',
-                str_operation=lambda x: x * 2
+        # Create parser with lambda that doubles the value
+        parser = TextParser(quantities=[
+            ParserQuantity(
+                'value_doubled',
+                r'value:\s*(\d+)',
+                str_operation=lambda x: float(x) * 2
+            ),
+            ParserQuantity(
+                'value_normal',
+                r'value:\s*(\d+)',
+                str_operation=float
             )
-            lambda_in_str_operation = True
-        except Exception:
-            lambda_in_str_operation = False
+        ])
 
-        # Test 3: Can these be used?
-        if lambda_in_str_operation:
-            # Both should be callable
-            assert callable(q1.str_operation)
-            assert callable(q2.str_operation)
-            # Both should work the same way
-            assert q1.str_operation("5") == q2.str_operation("5")
+        # Test with actual file
+        test_text = "value: 5"
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write(test_text)
+            parser.mainfile = f.name
+        parser.parse()
 
-        print(f"Lambda in str_operation: {lambda_in_str_operation}")
+        # Verify lambda executed: 5 * 2 = 10
+        assert parser.get('value_doubled') == 10.0
+        assert parser.get('value_normal') == 5.0
+
+    def test_lambda_with_abs_for_scf(self):
+        """
+        Practical test: Lambda with abs() for SCF delta values.
+
+        This demonstrates the actual use case for SCF parsing.
+        """
+        import tempfile
+        from nomad.parsing.file_parser.text_parser import Quantity as ParserQuantity, TextParser
+
+        parser = TextParser(quantities=[
+            ParserQuantity(
+                'delta_energy',
+                r'Change of total energy\s*:\s*([-\d\.]+)',
+                str_operation=lambda x: abs(float(x))  # Apply abs directly!
+            )
+        ])
+
+        test_text = "Change of total energy : -0.123"
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write(test_text)
+            parser.mainfile = f.name
+        parser.parse()
+
+        # Lambda with abs() works: |-0.123| = 0.123
+        assert parser.get('delta_energy') == 0.123
 
 
 class TestDeclarativePatternsForSCF:
