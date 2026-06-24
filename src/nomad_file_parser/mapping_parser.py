@@ -895,6 +895,7 @@ class Path(BaseModel, validate_assignment=True):
             String modes (global behavior):
                 - 'replace': Completely replace existing data at this path
                 - 'append': Keep existing data if present, otherwise use new data
+                - 'append_each': For lists, iterate and append each item individually
                 - 'merge' (default): Recursively merge dictionaries, align list elements
                 - 'merge@start' (lists): Align source[0] with target[0]
                 - 'merge@last' (lists): Align source[-1] with target[-1]
@@ -1001,6 +1002,18 @@ class Path(BaseModel, validate_assignment=True):
 
             # List merge: complex alignment logic based on merge_at position
             if isinstance(current, list):
+                # Handle append_each mode: append each item from incoming list individually
+                if mode == 'append_each' and isinstance(incoming, list):
+                    # This is the fix: iterate over incoming items and append each
+                    result = current.copy() if current else []
+                    for item in incoming:
+                        # Each item should be treated as a separate element to append
+                        result.append(item)
+                    return result
+                elif mode == 'append_each':
+                    # append_each with non-list incoming data: behave like regular append
+                    return incoming if incoming is not None else current
+
                 merge = re.match(r'merge(?:@(.+))*', mode or '')
                 if merge:
                     merge_at = merge.groups()[0]
@@ -1046,12 +1059,20 @@ class Path(BaseModel, validate_assignment=True):
                         incoming.insert(n, update(d, {}, update_mode_spec))
                 return incoming
 
-            # Scalar values: keep incoming if append mode, otherwise use current
-            return incoming if mode == 'append' and incoming is not None else current
+            # Scalar values: keep incoming if append/append_each mode, otherwise use current
+            if mode in ('append', 'append_each'):
+                return incoming if incoming is not None else current
+            return current
 
         new_data = self.parser.set_data(path, target, data, **kwargs)
 
-        update(cur_data, new_data, update_mode)
+        updated = update(cur_data, new_data, update_mode)
+
+        # Write the updated data back to the target
+        # For append_each mode, we need to write back the updated list
+        if update_mode == 'append_each' or updated != new_data:
+            self.parser.set_data(path, target, updated, **kwargs)
+            return updated
 
         return new_data
 
