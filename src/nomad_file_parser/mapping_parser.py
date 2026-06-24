@@ -2618,10 +2618,28 @@ class MetainfoParser(MappingParser):
             fill_mapper(
                 mapper, annotation, ['remove', 'cache', 'path_parser', 'update_mode']
             )
-            mapper['source'] = annotation.mapper
+
+            # Check if annotation.mapper is a function transformer
+            # Function transformers are tuples: ('function_name', [paths]) or ('function_name', [paths], {kwargs})
+            # Path strings start with '.' or '@' or are jmespath expressions
+            is_function_transformer = (
+                isinstance(annotation.mapper, tuple) and
+                len(annotation.mapper) >= 2
+            )
+
+            if is_function_transformer:
+                # Section-level transformer: add to mapper list instead of source
+                # This allows the transformer to execute and create data
+                mapper['mapper'] = [{
+                    'mapper': annotation.mapper,
+                    'target': '',  # Write to current section
+                }]
+            else:
+                # Traditional path-based mapping: set as source
+                mapper['source'] = annotation.mapper
+                mapper['mapper'] = []
 
             # Phase 3: Collect quantity mappers (leaf values)
-            mapper['mapper'] = []
             for name, quantity_def in section_def.all_quantities.items():
                 qannotation = quantity_def.m_get_annotations(
                     MAPPING_ANNOTATION_KEY, {}
