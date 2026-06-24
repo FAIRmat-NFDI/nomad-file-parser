@@ -71,9 +71,19 @@ Added comprehensive test coverage (1,846 lines across 7 test files):
 
 ## Limitations NOT Fixed
 
-This commit does NOT enable section-level transformers. Workarounds required:
+This commit does NOT enable section-level transformers.
 
-### 1. Field-level transformer pattern (recommended)
+### Alternative Approaches Investigated
+
+**Source Transformer Pattern** - Tested but does NOT work:
+- The `Mapper` class has no `source` field (see `annotations.py:1207-1264`)
+- Passing `source=('function', [])` is silently ignored by Pydantic
+- Cannot use transformers with `source` parameter
+- See `tests/test_source_transformer_pattern.py` for verification
+
+### Workarounds Required
+
+**1. Field-level transformer pattern** (recommended)
 Use direct path on section annotation, transformers on field annotations:
 
 ```python
@@ -92,7 +102,7 @@ add_mapping_annotation(
 )
 ```
 
-### 2. Manual instance creation in normalize()
+**2. Manual instance creation in normalize()**
 Call transformer manually and create instances programmatically:
 
 ```python
@@ -107,7 +117,7 @@ def normalize(self, archive, logger):
             )
 ```
 
-### 3. Pre-structure data
+**3. Pre-structure data**
 Ensure source data matches schema structure, use direct path with `update_mode='append_each'`:
 
 ```python
