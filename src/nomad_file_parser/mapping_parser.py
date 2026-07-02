@@ -2441,6 +2441,8 @@ class MetainfoParser(MappingParser):
                         if root.m_context:
                             sub_section.m_root().m_context = root.m_context
                         root.m_add_sub_section(section, sub_section)
+                    # Update the definition
+                    sub_section.m_def = section_def
                     self.from_dict(val_n, sub_section)
                     # Check if sub-section is empty
                     if not [
