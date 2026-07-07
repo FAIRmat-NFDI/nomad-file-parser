@@ -10,22 +10,7 @@ See: mapping-parser-nested-update-modes.md "Framework Limitation" section
 import pytest
 from hypothesis import given, settings, strategies as st
 
-# =============================================================================
-# Monkeypatch ClassicLogger to Fix ABC Interaction
-# =============================================================================
-from nomad.utils import ClassicLogger
-
-_original_getattr = ClassicLogger.__getattr__
-
-
-def _fixed_getattr(self, key):
-    """Fixed __getattr__ that doesn't return lambda for __isabstractmethod__."""
-    if key == '__isabstractmethod__':
-        raise AttributeError(key)
-    return _original_getattr(self, key)
-
-
-ClassicLogger.__getattr__ = _fixed_getattr
+# ClassicLogger ABC monkeypatch is applied once in conftest.py.
 
 
 # =============================================================================

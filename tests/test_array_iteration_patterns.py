@@ -9,30 +9,7 @@ See: mapping-parser-repeating-subsections.md "Common Confusion" section
 
 import pytest
 
-# =============================================================================
-# Monkeypatch ClassicLogger to Fix ABC Interaction
-# =============================================================================
-#
-# ISSUE: ClassicLogger's __getattr__ returns a lambda for ANY attribute access,
-# including Python's special __isabstractmethod__ attribute used by ABC machinery.
-# This causes Python to mark 'logger' as an abstract method, preventing instantiation
-# of MappingParser subclasses (MetainfoParser, HDF5Parser, XMLParser).
-#
-# See test_mapping_parser_properties.py for full explanation.
-#
-from nomad.utils import ClassicLogger
-
-_original_getattr = ClassicLogger.__getattr__
-
-
-def _fixed_getattr(self, key):
-    """Fixed __getattr__ that doesn't return lambda for __isabstractmethod__."""
-    if key == '__isabstractmethod__':
-        raise AttributeError(key)
-    return _original_getattr(self, key)
-
-
-ClassicLogger.__getattr__ = _fixed_getattr
+# ClassicLogger ABC monkeypatch is applied once in conftest.py.
 
 
 # =============================================================================
@@ -46,7 +23,7 @@ def create_test_parser(data_object):
     Uses NOMAD-FAIR's MetainfoParser which has from_dict() that filters empty elements
     and implements array iteration logic.
 
-    Note: Works because ClassicLogger monkeypatch above fixes ABC issue.
+    Note: Works because the ClassicLogger monkeypatch in conftest.py fixes the ABC issue.
 
     Args:
         data_object: MSection instance to use as data_object

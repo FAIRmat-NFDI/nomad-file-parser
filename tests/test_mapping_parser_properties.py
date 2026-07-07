@@ -10,209 +10,28 @@ Organized by testing goal:
 See: mapping-parser-property-based-testing-specs.md in Obsidian vault for detailed specifications.
 """
 
+import copy
 import string
 from typing import Any
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from nomad_file_parser.mapping_parser import Path, PathParser, BaseMapper, Mapper, MappingParser
 
 
-# =============================================================================
-# Monkeypatch ClassicLogger to Fix ABC Interaction
-# =============================================================================
-#
-# ISSUE: ClassicLogger's __getattr__ returns a lambda for ANY attribute access,
-# including Python's special __isabstractmethod__ attribute used by ABC machinery.
-# This causes Python to mark 'logger' as an abstract method, preventing instantiation
-# of MappingParser subclasses (MetainfoParser, HDF5Parser, XMLParser).
-#
-# ROOT CAUSE: In nomad/utils/__init__.py, ClassicLogger defines:
-#     def __getattr__(self, key):
-#         return lambda *args, **kwargs: self.__log(key, *args, **kwargs)
-#
-# When Python's ABC checks MappingParser.logger.__isabstractmethod__, it gets a
-# truthy lambda instead of AttributeError, marking logger as abstract.
-#
-# SOLUTION: Monkeypatch __getattr__ to raise AttributeError for __isabstractmethod__.
-#
-# See: mapping-parser-framework-feedback.md for detailed analysis.
-#
-from nomad.utils import ClassicLogger
-
-_original_getattr = ClassicLogger.__getattr__
+# ClassicLogger ABC monkeypatch is applied once in conftest.py.
 
 
-def _fixed_getattr(self, key):
-    """Fixed __getattr__ that doesn't return lambda for __isabstractmethod__."""
-    if key == '__isabstractmethod__':
-        raise AttributeError(key)
-    return _original_getattr(self, key)
-
-
-ClassicLogger.__getattr__ = _fixed_getattr
-
-
-# =============================================================================
-# Hypothesis Strategies
-# =============================================================================
-
-
-@st.composite
-def simple_path_strategy(draw, max_depth: int = 3) -> str:
-    """Generate simple jmespath-like paths without complex filters.
-
-    Examples: 'a', 'a.b', 'a.b.c', 'items.data'
-
-    Args:
-        draw: Hypothesis draw function
-        max_depth: Maximum nesting depth
-
-    Returns:
-        str: A simple path string
-    """
-    num_segments = draw(st.integers(min_value=1, max_value=max_depth))
-    segments = draw(
-        st.lists(
-            st.text(
-                alphabet=string.ascii_lowercase,
-                min_size=1,
-                max_size=8,
-            ),
-            min_size=num_segments,
-            max_size=num_segments,
-        )
-    )
-    return '.'.join(segments)
-
-
-@st.composite
-def path_with_indices_strategy(draw, max_depth: int = 3) -> str:
-    """Generate paths with array indices.
-
-    Examples: 'a[0]', 'a.b[1].c', 'items[2].data[0]'
-
-    Args:
-        draw: Hypothesis draw function
-        max_depth: Maximum nesting depth
-
-    Returns:
-        str: A path string with indices
-    """
-    base_path = draw(simple_path_strategy(max_depth=max_depth))
-
-    # Optionally add indices to some segments
-    segments = base_path.split('.')
-    indexed_segments = []
-
-    for segment in segments:
-        add_index = draw(st.booleans())
-        if add_index:
-            index = draw(st.integers(min_value=0, max_value=5))
-            indexed_segments.append(f'{segment}[{index}]')
-        else:
-            indexed_segments.append(segment)
-
-    return '.'.join(indexed_segments)
-
-
-@st.composite
-def relative_path_strategy(draw, max_depth: int = 3) -> str:
-    """Generate relative paths (starting with '.').
-
-    Examples: '.a', '.a.b', '.a[0].b'
-
-    Args:
-        draw: Hypothesis draw function
-        max_depth: Maximum nesting depth
-
-    Returns:
-        str: A relative path string
-    """
-    # Choose between simple and indexed paths
-    path = draw(
-        st.one_of(
-            simple_path_strategy(max_depth=max_depth),
-            path_with_indices_strategy(max_depth=max_depth),
-        )
-    )
-    return f'.{path}'
-
-
-def nested_dict_strategy(max_depth: int = 3, allow_none: bool = True, allow_falsy: bool = True) -> st.SearchStrategy:
-    """Generate nested dictionaries with various value types.
-
-    Args:
-        max_depth: Maximum nesting depth
-        allow_none: Whether to include None values in the generated data
-        allow_falsy: Whether to include falsy values (0, False, '', [], etc.)
-                     Framework filters these during merge, so set False for monoid tests
-
-    Returns:
-        SearchStrategy: A hypothesis strategy for nested dicts
-    """
-    # Base case: scalar values
-    scalar_types = []
-
-    if allow_falsy:
-        # All values including falsy ones
-        scalar_types = [
-            st.integers(),
-            st.floats(allow_nan=False, allow_infinity=False),
-            st.text(alphabet=string.ascii_letters, max_size=20),
-            st.booleans(),
-        ]
-        if allow_none:
-            scalar_types.append(st.none())
-    else:
-        # Only truthy values (for monoid tests where framework filters falsy)
-        scalar_types = [
-            st.integers(min_value=1, max_value=1000),  # Positive integers only
-            st.floats(min_value=0.1, max_value=1000.0, allow_nan=False, allow_infinity=False),  # Positive floats
-            st.text(alphabet=string.ascii_letters, min_size=1, max_size=20),  # Non-empty strings
-            st.just(True),  # Only True, not False
-        ]
-
-    scalars = st.one_of(*scalar_types)
-
-    if max_depth == 0:
-        return scalars
-
-    # Recursive case: values can be scalars, dicts, or lists
-    values = st.one_of(
-        scalars,
-        st.lists(scalars, min_size=1 if not allow_falsy else 0, max_size=5),  # Non-empty lists if no falsy
-        st.deferred(lambda: nested_dict_strategy(max_depth - 1, allow_none=allow_none, allow_falsy=allow_falsy)),
-    )
-
-    return st.dictionaries(
-        keys=st.text(alphabet=string.ascii_lowercase, min_size=1, max_size=8),
-        values=values,
-        min_size=1 if not allow_falsy else 0,  # Non-empty dicts if no falsy
-        max_size=5,
-    )
-
-
-@st.composite
-def update_mode_strategy(draw) -> str:
-    """Generate valid update mode strings.
-
-    Returns:
-        str: An update mode string
-    """
-    return draw(
-        st.one_of(
-            st.just('merge'),
-            st.just('append'),
-            st.just('replace'),
-            st.builds(lambda i: f'merge@{i}', st.integers(min_value=-2, max_value=5)),
-            st.just('merge@start'),
-            st.just('merge@last'),
-            st.just('merge@end'),
-        )
-    )
+# Shared hypothesis strategies live in tests/strategies.py.
+from strategies import (
+    nested_dict_strategy,
+    path_with_indices_strategy,
+    relative_path_strategy,
+    simple_path_strategy,
+    update_mode_strategy,
+)
 
 
 # =============================================================================
@@ -1181,52 +1000,48 @@ class TestMergeMonoid:
             f'  Child should start with: {parent.absolute_path}'
         )
 
-    # TODO: Path format equivalence test disabled
-    # The parent-child path relationship in Path is for resolution context,
-    # not for determining where set_data writes. set_data always operates
-    # on the provided target dict using the path's segments.
-    # Need to better understand the intended use of parent paths with set_data.
+    # The parent on a Path provides resolution context for reading, but set_data
+    # writes using the relative segments only: Path('a.b') writes {'a': {'b': v}}
+    # while Path('.b', parent='a') writes {'b': v}. Strict xfail until the intended
+    # parent semantics for set_data are settled.
+    # See: mapping-parser-framework-feedback.md
+    @pytest.mark.xfail(
+        strict=True,
+        reason='set_data ignores parent context: parent+relative writes only the '
+        'relative segments while the absolute path writes the full chain',
+    )
+    @given(
+        parent_path=simple_path_strategy(max_depth=2),
+        child_relative=simple_path_strategy(max_depth=2),
+        value=st.integers(),
+    )
+    @example(parent_path='a', child_relative='b', value=1)
+    @settings(max_examples=50)
+    def test_path_format_equivalence(
+        self, parent_path: str, child_relative: str, value: int
+    ):
+        """Property: Semantically equivalent paths produce same results.
 
-    # @given(
-    #     parent_path=simple_path_strategy(max_depth=2),
-    #     child_relative=simple_path_strategy(max_depth=2),
-    #     value=st.integers(),
-    # )
-    # @settings(max_examples=50)
-    # def test_path_format_equivalence(
-    #     self, parent_path: str, child_relative: str, value: int
-    # ):
-    #     """Property: Semantically equivalent paths produce same results.
-    #
-    #     Tests that 'a.b.c' with no parent is equivalent to '.b.c' with parent 'a'.
-    #
-    #     Algebraic structure: Path resolution is context-invariant for equivalent representations.
-    #     """
-    #     # Property: ∀ parent, child:
-    #     #   set(parent.child, v) == set(parent + '.' + child, v)
-    #
-    #     # Method 1: Single absolute path
-    #     absolute_path_str = f'{parent_path}.{child_relative}'
-    #     path_absolute = Path(path=absolute_path_str)
-    #     target1 = {}
-    #     path_absolute.set_data(value, target1)
-    #
-    #     # Method 2: Parent + relative path
-    #     parent = Path(path=parent_path)
-    #     relative_path_str = f'.{child_relative}'
-    #     path_relative = Path(path=relative_path_str, parent=parent)
-    #     target2 = {}
-    #     path_relative.set_data(value, target2)
-    #
-    #     # Both should produce equivalent structures
-    #     assert target1 == target2, (
-    #         f'Path format equivalence failed:\n'
-    #         f'  Absolute path: {absolute_path_str}\n'
-    #         f'  Parent path: {parent_path}, relative: {relative_path_str}\n'
-    #         f'  Value: {value}\n'
-    #         f'  Target1 (absolute): {target1}\n'
-    #         f'  Target2 (relative): {target2}'
-    #     )
+        Tests that 'a.b.c' with no parent is equivalent to '.b.c' with parent 'a'.
+
+        Algebraic structure: Path resolution is context-invariant for equivalent representations.
+        """
+        # Property: ∀ parent, child:
+        #   set(parent.child, v) == set(parent + '.' + child, v)
+        path_absolute = Path(path=f'{parent_path}.{child_relative}')
+        target1: dict = {}
+        path_absolute.set_data(value, target1)
+
+        parent = Path(path=parent_path)
+        path_relative = Path(path=f'.{child_relative}', parent=parent)
+        target2: dict = {}
+        path_relative.set_data(value, target2)
+
+        assert target1 == target2, (
+            f'Path format equivalence failed:\n'
+            f'  Target1 (absolute): {target1}\n'
+            f'  Target2 (relative): {target2}'
+        )
 
     @given(
         path_str=simple_path_strategy(max_depth=4),
@@ -1371,41 +1186,43 @@ class TestMergeMonoid:
             f'  Result: {target[path_str]}'
         )
 
-    # TODO: Append mode has type-dependent polymorphic behavior that causes issues
-    # See: mapping-parser-framework-feedback.md for details
-    # Uncomment when framework issues are resolved
+    # Append mode does not preserve existing list elements: the set machinery
+    # extends the list with empty dicts and writes the new elements over the tail,
+    # e.g. [1, 2] + append [3, 4] -> [{}, {}, 3, 4]. Strict xfail until resolved.
+    # See: mapping-parser-framework-feedback.md
+    @pytest.mark.xfail(
+        strict=True,
+        reason='append mode replaces existing list elements with empty dicts '
+        'instead of prepending them',
+    )
+    @given(
+        old_list=st.lists(st.integers(), min_size=1, max_size=3),
+        new_list=st.lists(st.integers(), min_size=1, max_size=3),
+    )
+    @example(old_list=[1], new_list=[2])
+    @settings(max_examples=50)
+    def test_append_mode_prepends_existing_to_lists(
+        self, old_list: list, new_list: list
+    ):
+        """Property: append(old_list, new_list) prepends old elements to new.
 
-    # @given(
-    #     old_list=st.lists(st.integers(), min_size=1, max_size=3),
-    #     new_list=st.lists(st.integers(), min_size=1, max_size=3),
-    # )
-    # @settings(max_examples=50)
-    # def test_append_mode_prepends_existing_to_lists(
-    #     self, old_list: list, new_list: list
-    # ):
-    #     """Property: append(old_list, new_list) prepends old elements to new.
-    #
-    #     Algebraic structure: Append for lists prepends existing data to incoming.
-    #
-    #     Tests that append mode preserves existing list elements by prepending them.
-    #     """
-    #     # Property: ∀ old_list, new_list: append(old_list, new_list) starts with old_list elements
-    #     path = Path(path='items')
-    #     target = {'items': old_list.copy()}
-    #
-    #     # Append new list
-    #     path.set_data(new_list, target, update_mode='append')
-    #
-    #     result = target['items']
-    #
-    #     # Result should start with old_list elements
-    #     assert result[: len(old_list)] == old_list, (
-    #         f'Append mode did not prepend existing list elements:\n'
-    #         f'  Old list: {old_list}\n'
-    #         f'  New list: {new_list}\n'
-    #         f'  Expected to start with: {old_list}\n'
-    #         f'  Got: {result}'
-    #     )
+        Algebraic structure: Append for lists prepends existing data to incoming.
+
+        Tests that append mode preserves existing list elements by prepending them.
+        """
+        # Property: ∀ old_list, new_list: append(old_list, new_list) starts with old_list elements
+        path = Path(path='items')
+        target = {'items': old_list.copy()}
+
+        path.set_data(new_list, target, update_mode='append')
+
+        result = target['items']
+        assert result[: len(old_list)] == old_list, (
+            f'Append mode did not prepend existing list elements:\n'
+            f'  Old list: {old_list}\n'
+            f'  New list: {new_list}\n'
+            f'  Got: {result}'
+        )
 
     @given(
         new_value=st.integers(),
@@ -1529,54 +1346,51 @@ class TestMergeMonoid:
     # B1. Additional Merge Properties (Suggested Tests)
     # -------------------------------------------------------------------------
 
-    # TODO: Merge commutativity fails due to key normalization (.key vs key)
-    # See: mapping-parser-framework-feedback.md for details
-    # Uncomment when framework handles key normalization consistently
+    # Merge is not commutative even for disjoint keys: keys of the dict merged
+    # first come back '.'-prefixed while keys merged second stay plain, e.g.
+    # merge({'a': 1}, {'b': 2}) -> {'b': 2, '.a': 1} but
+    # merge({'b': 2}, {'a': 1}) -> {'a': 1, '.b': 2}. Strict xfail until the
+    # key normalization is handled consistently.
+    # See: mapping-parser-framework-feedback.md
+    @pytest.mark.xfail(
+        strict=True,
+        reason='merge mode stores first-merged keys with a leading dot, '
+        'breaking commutativity for disjoint keys',
+    )
+    @given(
+        data1=nested_dict_strategy(max_depth=2),
+        data2=nested_dict_strategy(max_depth=2),
+    )
+    @example(data1={'a': 1}, data2={'b': 2})
+    @settings(max_examples=50)
+    def test_merge_commutative_disjoint_keys(self, data1: dict, data2: dict):
+        """Property: merge(a, b) == merge(b, a) for disjoint keys.
 
-    # @given(
-    #     data1=nested_dict_strategy(max_depth=2),
-    #     data2=nested_dict_strategy(max_depth=2),
-    # )
-    # @settings(max_examples=50)
-    # def test_merge_commutative_disjoint_keys(
-    #     self, data1: dict, data2: dict
-    # ):
-    #     """Property: merge(a, b) == merge(b, a) for disjoint keys.
-    #
-    #     Algebraic structure: Merge is commutative when key sets don't overlap.
-    #
-    #     Tests that merge order doesn't matter when dicts have no shared keys.
-    #     """
-    #     # Property: ∀ data1, data2 (disjoint keys): merge(data1, data2) == merge(data2, data1)
-    #     # Skip if keys overlap or have key normalization issues
-    #     if isinstance(data1, dict) and isinstance(data2, dict):
-    #         keys1 = set(data1.keys())
-    #         keys2 = set(data2.keys())
-    #         # Skip if any key starts with '.' (normalization issues)
-    #         if any(k.startswith('.') for k in keys1 | keys2):
-    #             return
-    #         if keys1 & keys2:
-    #             return  # Keys overlap, skip
-    #
-    #     path = Path(path='content')
-    #
-    #     # Merge in both orders
-    #     target_ab = {}
-    #     path.set_data(data1, target_ab, update_mode='merge')
-    #     path.set_data(data2, target_ab, update_mode='merge')
-    #
-    #     target_ba = {}
-    #     path.set_data(data2, target_ba, update_mode='merge')
-    #     path.set_data(data1, target_ba, update_mode='merge')
-    #
-    #     # Both should yield same result for disjoint keys
-    #     assert target_ab == target_ba, (
-    #         f'Merge is not commutative for disjoint keys:\n'
-    #         f'  Data1: {data1}\n'
-    #         f'  Data2: {data2}\n'
-    #         f'  merge(a,b): {target_ab}\n'
-    #         f'  merge(b,a): {target_ba}'
-    #     )
+        Algebraic structure: Merge is commutative when key sets don't overlap.
+
+        Tests that merge order doesn't matter when dicts have no shared keys.
+        """
+        # Property: ∀ data1, data2 (disjoint keys): merge(data1, data2) == merge(data2, data1)
+        keys1, keys2 = set(data1), set(data2)
+        if keys1 & keys2 or any(k.startswith('.') for k in keys1 | keys2):
+            return  # Property only applies to disjoint plain keys
+
+        path = Path(path='content')
+
+        # Deep-copy inputs: merge mutates the incoming data when reused
+        target_ab: dict = {}
+        path.set_data(copy.deepcopy(data1), target_ab, update_mode='merge')
+        path.set_data(copy.deepcopy(data2), target_ab, update_mode='merge')
+
+        target_ba: dict = {}
+        path.set_data(copy.deepcopy(data2), target_ba, update_mode='merge')
+        path.set_data(copy.deepcopy(data1), target_ba, update_mode='merge')
+
+        assert target_ab == target_ba, (
+            f'Merge is not commutative for disjoint keys:\n'
+            f'  merge(a,b): {target_ab}\n'
+            f'  merge(b,a): {target_ba}'
+        )
 
     @given(
         old_data=nested_dict_strategy(max_depth=2),
@@ -2694,7 +2508,7 @@ def create_test_parser(data_object):
 
     Uses NOMAD-FAIR's MetainfoParser which has from_dict() that filters empty elements.
 
-    Note: Works because ClassicLogger monkeypatch at top of file fixes ABC issue.
+    Note: Works because the ClassicLogger monkeypatch in conftest.py fixes the ABC issue.
 
     Args:
         data_object: MSection instance to use as data_object
@@ -2741,53 +2555,58 @@ class TestRepeatingSubsectionsUnit:
     for details.
     """
 
-    # COMMENTED OUT: Fails due to falsy value filtering - {'value': 0, 'label': ''}
-    # is considered empty even though value is explicitly 0 (not None) and label is ''
-    # (not None). Framework filters elements with all falsy values, not just None values.
-    # @given(
-    #     elements=st.lists(
-    #         st.fixed_dictionaries({
-    #             'value': st.one_of(st.integers(), st.none()),
-    #             'label': st.one_of(st.text(alphabet=string.ascii_letters, max_size=10), st.none())
-    #         }),
-    #         min_size=0,
-    #         max_size=15
-    #     )
-    # )
-    # @settings(max_examples=50)
-    # def test_cardinality_preservation(self, elements: list[dict]):
-    #     """Property: ∀ source_list: len(instances) == count_non_empty(source_list)
-    #
-    #     Algebraic structure: List-to-instances is cardinality-preserving (modulo empty filtering).
-    #     """
-    #     # Property: ∀ source_list: len(instances) == count_non_empty(source_list)
-    #     from nomad.metainfo import MSection, Quantity, SubSection
-    #
-    #     class Item(MSection):
-    #         value = Quantity(type=int)
-    #         label = Quantity(type=str)
-    #
-    #     class Container(MSection):
-    #         items = SubSection(sub_section=Item, repeats=True)
-    #
-    #     # Create parser and populate via from_dict
-    #     parser = create_test_parser(Container())
-    #     parser.from_dict({'items': elements})
-    #
-    #     # Count non-empty elements (at least one non-None field)
-    #     non_empty = [
-    #         e for e in elements
-    #         if e.get('value') is not None or e.get('label') is not None
-    #     ]
-    #
-    #     # Verify cardinality preserved
-    #     assert len(parser.data_object.items) == len(non_empty), (
-    #         f'Cardinality not preserved:\n'
-    #         f'  Source elements: {len(elements)}\n'
-    #         f'  Non-empty elements: {len(non_empty)}\n'
-    #         f'  Created instances: {len(parser.data_object.items)}\n'
-    #         f'  Elements: {elements}'
-    #     )
+    # Fails due to falsy value filtering: {'value': 0, 'label': ''} is considered
+    # empty even though value is explicitly 0 (not None) and label is '' (not None).
+    # The framework filters elements with all falsy values, not just None values.
+    # Strict xfail until the filtering distinguishes falsy from missing.
+    @pytest.mark.xfail(
+        strict=True,
+        reason='from_dict drops elements whose fields are all falsy (0, empty '
+        'string), not only elements whose fields are all None',
+    )
+    @given(
+        elements=st.lists(
+            st.fixed_dictionaries({
+                'value': st.one_of(st.integers(), st.none()),
+                'label': st.one_of(st.text(alphabet=string.ascii_letters, max_size=10), st.none())
+            }),
+            min_size=0,
+            max_size=15
+        )
+    )
+    @example(elements=[{'value': 0, 'label': ''}])
+    @settings(max_examples=50)
+    def test_cardinality_preservation(self, elements: list[dict]):
+        """Property: ∀ source_list: len(instances) == count_non_empty(source_list)
+
+        Algebraic structure: List-to-instances is cardinality-preserving (modulo empty filtering).
+        """
+        # Property: ∀ source_list: len(instances) == count_non_empty(source_list)
+        from nomad.metainfo import MSection, Quantity, SubSection
+
+        class Item(MSection):
+            value = Quantity(type=int)
+            label = Quantity(type=str)
+
+        class Container(MSection):
+            items = SubSection(sub_section=Item, repeats=True)
+
+        parser = create_test_parser(Container())
+        parser.from_dict({'items': elements})
+
+        # Count non-empty elements (at least one non-None field)
+        non_empty = [
+            e for e in elements
+            if e.get('value') is not None or e.get('label') is not None
+        ]
+
+        assert len(parser.data_object.items) == len(non_empty), (
+            f'Cardinality not preserved:\n'
+            f'  Source elements: {len(elements)}\n'
+            f'  Non-empty elements: {len(non_empty)}\n'
+            f'  Created instances: {len(parser.data_object.items)}\n'
+            f'  Elements: {elements}'
+        )
 
     @given(
         elements=st.lists(
@@ -2909,6 +2728,15 @@ class TestRepeatingSubsectionsUnit:
             f'  Instances created: {len(parser.data_object.items)}'
         )
 
+    # Pre-existing failure (predates the 2026-07 test-suite extension): from_dict
+    # instantiates BaseItem for every element instead of dispatching on 'm_def',
+    # in the nomad-lab version currently in this workspace. Strict xfail so the
+    # suite stays green while the regression is tracked.
+    @pytest.mark.xfail(
+        strict=True,
+        reason='from_dict ignores m_def: heterogeneous elements all instantiate '
+        'the base section type instead of the m_def subclass',
+    )
     @given(
         elements=st.lists(
             st.one_of(
@@ -2927,6 +2755,7 @@ class TestRepeatingSubsectionsUnit:
             max_size=5
         )
     )
+    @example(elements=[{'m_def': 'ItemTypeA', 'name': 'A', 'property_a': '0'}])
     @settings(max_examples=30)
     def test_polymorphic_type_preservation(self, elements: list[dict]):
         """Property: ∀ element with m_def: type(instances[i]) == m_def type
@@ -3041,6 +2870,15 @@ class TestRepeatingSubsectionsMultiParser:
     Tests build_mapper(), transformer execution, multi-mapper patterns, and update modes.
     """
 
+    # Pre-existing failure (predates the 2026-07 test-suite extension): the
+    # annotation-driven pipeline does not create one instance per source element
+    # in the nomad-lab version currently in this workspace. Strict xfail so the
+    # suite stays green while the regression is tracked.
+    @pytest.mark.xfail(
+        strict=True,
+        reason='annotation-driven from_dict does not preserve source-list '
+        'cardinality in the current nomad-lab',
+    )
     @given(
         source_list=st.lists(
             st.fixed_dictionaries({
@@ -3051,6 +2889,7 @@ class TestRepeatingSubsectionsMultiParser:
             max_size=15
         )
     )
+    @example(source_list=[{'energy': 1.0, 'converged': True}])
     @settings(max_examples=40)
     def test_end_to_end_cardinality_annotation_driven(self, source_list: list[dict]):
         """Property: ∀ source with list: len(instances) == count_non_empty(list)
@@ -3105,9 +2944,19 @@ class TestRepeatingSubsectionsMultiParser:
             f'  Instances: {len(parser.data_object.scf_steps)}'
         )
 
+    # Pre-existing failure (predates the 2026-07 test-suite extension): a
+    # list-returning transformer creates no instances in the nomad-lab version
+    # currently in this workspace. Strict xfail so the suite stays green while
+    # the regression is tracked. Related: mapping-parser-function-returns-list-limitation.md
+    @pytest.mark.xfail(
+        strict=True,
+        reason='list-returning transformer creates no section instances in the '
+        'current nomad-lab',
+    )
     @given(
         num_items=st.integers(min_value=0, max_value=15)
     )
+    @example(num_items=1)
     @settings(max_examples=30)
     def test_transformer_list_creates_instances(self, num_items: int):
         """Property: ∀ transformer returning list: len(instances) == len(list)
@@ -3158,6 +3007,16 @@ class TestRepeatingSubsectionsMultiParser:
             f'  Got: {len(parser.data_object.items)}'
         )
 
+    # Pre-existing failure (predates the 2026-07 test-suite extension):
+    # replacing existing instances with an empty incoming list leaves the
+    # existing instances in place in the nomad-lab version currently in this
+    # workspace. Strict xfail so the suite stays green while the regression
+    # is tracked.
+    @pytest.mark.xfail(
+        strict=True,
+        reason="update_mode='replace' with an empty incoming list does not "
+        'remove existing instances in the current nomad-lab',
+    )
     @given(
         existing=st.lists(
             st.fixed_dictionaries({'value': st.integers(min_value=1)}),  # Exclude 0
@@ -3171,6 +3030,7 @@ class TestRepeatingSubsectionsMultiParser:
         ),
         mode=st.sampled_from(['merge', 'replace'])
     )
+    @example(existing=[{'value': 1}], incoming=[], mode='replace')
     @settings(max_examples=40)
     def test_update_mode_with_instances(
         self, existing: list[dict], incoming: list[dict], mode: str
@@ -3714,6 +3574,98 @@ class TestPolymorphicMerge:
                 assert not hasattr(calc, 'scf_iterations'), (
                     'GW calculation gained SCF field (CORRUPTION!)'
                 )
+
+
+# =============================================================================
+# Mapper Structure Properties
+# =============================================================================
+
+
+class TestMapperStructure:
+    """Structural invariants of mapper trees built via BaseMapper.from_dict()."""
+
+    @staticmethod
+    def _prefix_chain(path: str) -> list[str]:
+        """Dot-prefix chain of a path with indices stripped.
+
+        'a.b[0].c' -> ['a', 'a.b', 'a.b.c'], mirroring the contract of
+        BaseMapper.get_required_paths().
+        """
+        import re
+
+        segments = re.sub(r'\[[^\]]*\]', '', path).split('.')
+        return ['.'.join(segments[:n]) for n in range(1, len(segments) + 1)]
+
+    # get_required_paths() currently raises RecursionError on any mapper tree
+    # with a leaf: BaseMapper.__iter__ yields the mapper itself when it has no
+    # child mappers, and get_paths() recurses on every yielded child. Even the
+    # docstring example of get_required_paths() fails. Strict xfail until fixed.
+    @pytest.mark.xfail(
+        strict=True,
+        reason='BaseMapper.__iter__ yields self for leaf mappers, so '
+        'get_required_paths() infinitely recurses on any realistic mapper tree',
+    )
+    @given(
+        transformer_paths=st.lists(
+            st.one_of(simple_path_strategy(), path_with_indices_strategy()),
+            min_size=1,
+            max_size=4,
+        ),
+        identity_path=simple_path_strategy(),
+    )
+    @settings(max_examples=50)
+    def test_get_required_paths_prefix_closure(
+        self, transformer_paths: list[str], identity_path: str
+    ):
+        """Property: every source path's full prefix chain is required.
+
+        get_required_paths() feeds the parse_only_required optimization in
+        to_dict() implementations; a missing prefix silently drops source data.
+        """
+        mapper = BaseMapper.from_dict(
+            {
+                'mapper': [
+                    {'mapper': ('func', transformer_paths), 'target': 'x'},
+                    {'mapper': identity_path, 'target': 'y'},
+                ]
+            }
+        )
+
+        required = mapper.get_required_paths()
+        required_set = set(required)
+
+        assert len(required) == len(required_set), 'required paths contain duplicates'
+        for path in [*transformer_paths, identity_path]:
+            for prefix in self._prefix_chain(path):
+                assert prefix in required_set, (
+                    f'Missing prefix {prefix!r} of source path {path!r}:\n'
+                    f'  required: {sorted(required_set)}'
+                )
+
+    def test_sort_orders_mappers_before_transformers(self):
+        """Mapper.sort() puts container Mappers before Transformers, keeping all children."""
+        mapper = BaseMapper.from_dict(
+            {
+                'mapper': [
+                    {'mapper': 'a.b', 'target': 't1'},
+                    {'mapper': [{'mapper': 'c.d', 'target': 't2'}], 'target': 'm1'},
+                    {'mapper': 'e.f', 'target': 't3'},
+                    {'mapper': [{'mapper': 'g.h', 'target': 't4'}], 'target': 'm2'},
+                ]
+            }
+        )
+        children_before = list(mapper.mappers)
+
+        mapper.sort()
+
+        assert sorted(map(id, mapper.mappers)) == sorted(map(id, children_before)), (
+            'sort() must reorder, not add or drop children'
+        )
+        types = [type(m).__name__ for m in mapper.mappers]
+        first_transformer = types.index('Transformer')
+        assert 'Mapper' not in types[first_transformer:], (
+            f'Mappers must sort before Transformers, got {types}'
+        )
 
 
 # =============================================================================
