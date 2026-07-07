@@ -36,6 +36,7 @@ different budget (stress tests, expensive integration cases).
 | `test_nested_update_limitation.py` | `MetainfoParser.from_dict` | characterization of the depth-2 update limitation against a manual-transformer baseline |
 | `test_mapping_annotation_constraints.py` | mapping annotations | serialization constraints, lambda support, declarative patterns |
 | `test_array_iteration_patterns.py` | `MetainfoParser.from_dict` | example-based demonstration of array iteration and the `repeats=True` requirement |
+| `test_known_issues.py` | `ParsePattern`, `Quantity.to_data`, `FileParser` | one deterministic reproduction per filed bug in the otherwise untested derived-parser modules |
 
 Shared strategies live in `strategies.py`; `conftest.py` also applies the
 `ClassicLogger` monkeypatch that unblocks instantiation of `MappingParser`
@@ -52,6 +53,9 @@ forcing removal of the marker and turning the test into a regression guard.
 | Test | Behavior pinned | Issue |
 |---|---|---|
 | `test_get_required_paths_prefix_closure` | `get_required_paths()` raises `RecursionError`: `BaseMapper.__iter__` yields self for leaf mappers | [#9](https://github.com/FAIRmat-NFDI/nomad-file-parser/issues/9) |
+| `test_parse_pattern_call_extracts_value` | `ParsePattern.__call__` fails on any invocation (uncompiled pattern, no return) | [#6](https://github.com/FAIRmat-NFDI/nomad-file-parser/issues/6) |
+| `test_to_data_is_stateless` | `Quantity.to_data` nulls `self.dtype` after one conversion failure | [#7](https://github.com/FAIRmat-NFDI/nomad-file-parser/issues/7) |
+| `test_getitem_int_returns_positional_result` | `FileParser.__getitem__` returns `None` for all integer keys | [#8](https://github.com/FAIRmat-NFDI/nomad-file-parser/issues/8) |
 | `test_path_format_equivalence` | `set_data` ignores the parent context of a relative `Path` | pending |
 | `test_append_mode_prepends_existing_to_lists` | append mode replaces existing list elements with empty dicts | pending |
 | `test_merge_commutative_disjoint_keys` | first-merged keys are stored with a leading dot, breaking commutativity | pending |
