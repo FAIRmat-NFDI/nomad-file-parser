@@ -51,7 +51,7 @@ forcing removal of the marker and turning the test into a regression guard.
 
 | Test | Behavior pinned | Issue |
 |---|---|---|
-| `test_get_required_paths_prefix_closure` | `get_required_paths()` raises `RecursionError`: `BaseMapper.__iter__` yields self for leaf mappers | pending |
+| `test_get_required_paths_prefix_closure` | `get_required_paths()` raises `RecursionError`: `BaseMapper.__iter__` yields self for leaf mappers | [#9](https://github.com/FAIRmat-NFDI/nomad-file-parser/issues/9) |
 | `test_path_format_equivalence` | `set_data` ignores the parent context of a relative `Path` | pending |
 | `test_append_mode_prepends_existing_to_lists` | append mode replaces existing list elements with empty dicts | pending |
 | `test_merge_commutative_disjoint_keys` | first-merged keys are stored with a leading dot, breaking commutativity | pending |
