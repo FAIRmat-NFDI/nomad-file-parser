@@ -1,3 +1,4 @@
+from .chgcar_parser import CHGCARFileParser
 from .file_parser import ArchiveWriter, FileParser
 from .mapping_parser import MappingParser
 from .tar_parser import TarParser
