@@ -1,20 +1,23 @@
-# Copyright 2018 Markus Scheidgen
+#
+# Copyright The NOMAD Authors.
+#
+# This file is part of NOMAD. See https://nomad-lab.eu for further info.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#   http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an"AS IS" BASIS,
+# distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
 
 
 import io
-import logging
 import mmap
 import re
 from collections.abc import Callable
@@ -22,8 +25,9 @@ from typing import Any
 
 import numpy as np
 import pint
-
-from .file_parser import FileParser
+from nomad.metainfo import Quantity as mQuantity
+from nomad.parsing.file_parser import FileParser
+from nomad.utils import get_logger
 
 
 class ParsePattern:
@@ -109,7 +113,7 @@ class Quantity:
 
     def __init__(
         self,
-        quantity: Any,
+        quantity: str | mQuantity,
         re_pattern: str | list | ParsePattern,
         **kwargs,
     ):
@@ -122,7 +126,7 @@ class Quantity:
             self.dtype = None
             self.unit = None
             self.shape = None
-        else:
+        elif isinstance(quantity, mQuantity):
             self.name = quantity.name
             self.dtype = (
                 quantity.type.type
@@ -287,7 +291,7 @@ class TextParser(FileParser):
         **kwargs,
     ):
         if logger is None:
-            logger = logging.getLogger(__name__)
+            logger = get_logger(__name__)
         super().__init__(mainfile, logger=logger, open=kwargs.get('open', None))
         self._quantities: list[Quantity] = quantities
         self.findall: bool = kwargs.get('findall', True)
@@ -309,10 +313,13 @@ class TextParser(FileParser):
             if self._quantities[i].sub_parser:
                 continue
             try:
-                assert (
-                    re_has_group.search(self._quantities[i].re_pattern.pattern.decode())
-                    is not None
-                )
+                if len(self._quantities[i].re_patterns) == 1:
+                    assert (
+                        re_has_group.search(
+                            self._quantities[i].re_pattern.pattern.decode()
+                        )
+                        is not None
+                    )
             except Exception as e:
                 self.logger.error(
                     'Invalid quantity pattern',
@@ -594,8 +601,7 @@ class TextParser(FileParser):
         with self.open(self.mainfile, 'rb') as fileobj:
             fileobj.seek(self._file_offset)
             # for multiline support
-            lines = b''
-            n_lines = 0
+            lines = []
             parsed = []
             while True:
                 position = fileobj.tell()
@@ -611,11 +617,8 @@ class TextParser(FileParser):
                 ]:
                     break
                 if self._multiline:
-                    if n_lines > self.max_lines:
-                        n_lines = 0
-                        lines = b''
-                    n_lines += 1
-                    lines += line
+                    lines.append(line)
+                    lines = lines[-self.max_lines :]
                 for n_q, quantity in enumerate(self.quantities):
                     if n_q in parsed:
                         continue
@@ -631,31 +634,46 @@ class TextParser(FileParser):
                             n_re = [0]
 
                     if quantity.multiline:
-                        match = re.search(quantity.re_patterns[n_re[0]], lines)
+                        match = re.search(
+                            quantity.re_patterns[n_re[0]], b''.join(lines)
+                        )
                     # faster matching
                     elif quantity.exact_match:
                         match = re.match(quantity.re_patterns[n_re[0]], line)
                     else:
                         match = re.search(quantity.re_patterns[n_re[0]], line)
                     if match:
-                        lines = b''
+                        lines = []
                         if quantity.sub_parser:
                             block = [
                                 match.span(n + 1) for n in range(len(match.groups()))
                             ]
                             if not block:
                                 # if nothing is captured capture the whole block
-                                block = [match.span()]
+                                # shift to current line
+                                start = len(match.string) - len(line)
+                                block = [
+                                    (match.span()[0] - start, match.span()[1] - start)
+                                ]
                             block = [(s + position, e + position) for s, e in block]
                             blocks[n_re[0]] = block
                         else:
                             values = [g or b'' for g in match.groups()]
-                            unit_index = quantity.re_patterns[n_re[0]].groupindex.get(
-                                '__unit'
-                            )
-                            if unit_index:
-                                self._units[n_q] = values.pop(unit_index - 1).decode()
-                            blocks[n_re[0]] = b' '.join(values).decode()
+                            if values:
+                                unit_index = quantity.re_patterns[
+                                    n_re[0]
+                                ].groupindex.get('__unit')
+                                if unit_index:
+                                    self._units[n_q] = values.pop(
+                                        unit_index - 1
+                                    ).decode()
+                                blocks[n_re[0]] = b' '.join(values).decode()
+                            else:
+                                # if noting is captured, capture spanned block
+                                blocks[n_re[0]] = (
+                                    position,
+                                    position + match.span()[1] - match.span()[0],
+                                )
 
                         if not self.allow_overlap:
                             break
@@ -683,7 +701,19 @@ class TextParser(FileParser):
                 else:
                     blocks = self._blocks.pop(n_q)
                     self._blocks.insert(n_q, None)
-                    data = [' '.join(block) for block in blocks if None not in block]
+                    data = []
+                    for block in blocks:
+                        if None in block or not block:
+                            continue
+                        strings = [b for b in block if isinstance(b, str)]
+                        if strings:
+                            data.append(' '.join(strings))
+                        else:
+                            spans = [b for b in block if isinstance(b, tuple)]
+                            fileobj.seek(spans[0][0])
+                            data.append(
+                                fileobj.read(spans[-1][-1] - spans[0][0]).decode()
+                            )
                     if data:
                         data = [quantity.to_data(d) for d in data]
                         unit = (
@@ -705,8 +735,7 @@ class TextParser(FileParser):
 
     def parse(self, key=None):
         """
-        Triggers parsing of quantity with name key, if key is None will parse all
-        quantities.
+        Triggers parsing of quantity with name key, if key is None will parse all quantities.
 
         Returns file parser.
         """
