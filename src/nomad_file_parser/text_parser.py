@@ -21,13 +21,15 @@ import io
 import mmap
 import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pint
 from nomad.metainfo import Quantity as mQuantity
-from nomad.parsing.file_parser import FileParser
 from nomad.utils import get_logger
+
+from .file_parser import FileParser
 
 
 class ParsePattern:
@@ -328,6 +330,7 @@ class TextParser(FileParser):
                 )
                 self._quantities.pop(i)
         self._re_findall: re.Pattern = None
+        self._parsed_pointers: list[tuple[int, int]] = []
 
     def copy(self):
         """
@@ -343,6 +346,11 @@ class TextParser(FileParser):
             max_lines=self.max_lines,
             line_parsing=self.line_parsing,
         )
+
+    def reset(self):
+        """Reset parsed results and the source pointers collected during parsing."""
+        super().reset()
+        self._parsed_pointers = []
 
     def init_quantities(self):
         """
@@ -364,6 +372,7 @@ class TextParser(FileParser):
         """
         self._file_handler = None
         self._results = None
+        self._parsed_pointers = []
         self._quantities = val
 
     @property
@@ -440,6 +449,82 @@ class TextParser(FileParser):
         """
         for key in self.keys():
             yield key, self.get(key)
+
+    def visualize(
+        self,
+        context_lines: int = 3,
+        key: str | None = None,
+        full_file: bool = True,
+    ):
+        """Create a source view highlighting this text parser's leaf quantities."""
+        from .visualizer import TextParserVisualizer
+
+        self.parse()
+        return TextParserVisualizer(
+            self, context_lines=context_lines, key=key, full_file=full_file
+        )
+
+    def show_visualization(
+        self,
+        context_lines: int = 3,
+        path: str | Path | None = None,
+        key: str | None = None,
+        full_file: bool = True,
+    ) -> Path:
+        """Open the text-parser visualization in a browser tab."""
+        return self.visualize(
+            context_lines=context_lines, key=key, full_file=full_file
+        ).show(path)
+
+    def _record_match(self, match):
+        """Record leaf capture spans while parsing, for later visualization."""
+        spans = [
+            match.span(index + 1)
+            for index in range(len(match.groups()))
+            if match.span(index + 1) != (-1, -1)
+        ] or [match.span()]
+        self._parsed_pointers.extend(self._absolute_spans(spans))
+
+    def _record_matches(self, quantity: Quantity, block):
+        matches = (
+            quantity.re_pattern.finditer(block)
+            if quantity.repeats
+            else [quantity.re_pattern.search(block)]
+        )
+        for match in matches:
+            if match is not None:
+                self._record_match(match)
+
+    def _absolute_spans(self, spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        """Map spans in the loaded block back to the original main file."""
+        if not isinstance(self._file_handler, list):
+            return [
+                (self._file_offset + start, self._file_offset + end)
+                for start, end in spans
+            ]
+
+        absolute_spans = []
+        loaded_start = 0
+        for source_start, source_end in self._file_handler:
+            loaded_end = loaded_start + source_end - source_start
+            for start, end in spans:
+                overlap_start = max(start, loaded_start)
+                overlap_end = min(end, loaded_end)
+                if overlap_start < overlap_end:
+                    absolute_spans.append(
+                        (
+                            self._file_offset
+                            + source_start
+                            + overlap_start
+                            - loaded_start,
+                            self._file_offset
+                            + source_start
+                            + overlap_end
+                            - loaded_start,
+                        )
+                    )
+            loaded_start = loaded_end
+        return absolute_spans
 
     def _add_value(self, quantity: Quantity, value: list[str], units):
         """
@@ -538,6 +623,7 @@ class TextParser(FileParser):
                 continue
 
             self._add_value(quantity, values, units)
+            self._record_matches(quantity, block)
 
     def _parse_quantity(self, quantity: Quantity):
         """
@@ -569,6 +655,7 @@ class TextParser(FileParser):
                 value.append(sub_parser if sub_parser.findlazy else sub_parser.parse())
 
             else:
+                self._record_match(res)
                 try:
                     unit = res.groupdict().get(f'__unit_{quantity.name}', None)
                     units.append(unit.decode() if unit is not None else None)
