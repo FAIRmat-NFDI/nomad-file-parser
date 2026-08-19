@@ -460,9 +460,20 @@ class TextParser(FileParser):
         from .visualizer import TextParserVisualizer
 
         self.parse()
+        self._parse_visualization_children()
         return TextParserVisualizer(
             self, context_lines=context_lines, key=key, full_file=full_file
         )
+
+    def _parse_visualization_children(self):
+        """Parse deferred nested parsers so all leaf pointers are available."""
+        for value in self._results.values():
+            parsers = value if isinstance(value, list) else [value]
+            for parser in parsers:
+                if isinstance(parser, TextParser):
+                    if parser._results is None:
+                        parser.parse()
+                    parser._parse_visualization_children()
 
     def show_visualization(
         self,
@@ -646,6 +657,8 @@ class TextParser(FileParser):
                 sub_parser.logger = self.logger
                 if sub_parser.findlazy is None:
                     sub_parser.findlazy = self.findlazy
+                if not res.groups():
+                    continue
                 start = res.span(1)[0]
                 sub_parser._file_offset = self._file_offset + start
                 sub_parser._file_handler = [
@@ -682,6 +695,7 @@ class TextParser(FileParser):
 
     def _parse_line(self, key=None):
         self._blocks = [[[None] * len(q.re_patterns)] for q in self.quantities]
+        self._line_pointers = [[[None] * len(q.re_patterns)] for q in self.quantities]
         self._units = [None] * len(self.quantities)
         self._multiline = True in [q.multiline for q in self.quantities]
         self._repeats = True in [q.repeats for q in self.quantities]
@@ -710,6 +724,7 @@ class TextParser(FileParser):
                     if n_q in parsed:
                         continue
                     blocks = self._blocks[n_q][-1]
+                    pointers = self._line_pointers[n_q][-1]
                     n_re = [n for n, p in enumerate(blocks) if p is None]
                     if not n_re:
                         if not quantity.repeats:
@@ -718,6 +733,8 @@ class TextParser(FileParser):
                         else:
                             blocks = [None] * len(quantity.re_patterns)
                             self._blocks[n_q].append(blocks)
+                            pointers = [None] * len(quantity.re_patterns)
+                            self._line_pointers[n_q].append(pointers)
                             n_re = [0]
 
                     if quantity.multiline:
@@ -745,6 +762,20 @@ class TextParser(FileParser):
                             block = [(s + position, e + position) for s, e in block]
                             blocks[n_re[0]] = block
                         else:
+                            match_start = position - (len(match.string) - len(line))
+                            full_span = (
+                                match_start + match.span()[0],
+                                match_start + match.span()[1],
+                            )
+                            captured_spans = [
+                                (
+                                    match_start + match.span(index + 1)[0],
+                                    match_start + match.span(index + 1)[1],
+                                )
+                                for index in range(len(match.groups()))
+                                if match.span(index + 1) != (-1, -1)
+                            ]
+                            pointers[n_re[0]] = (full_span, captured_spans)
                             values = [g or b'' for g in match.groups()]
                             if values:
                                 unit_index = quantity.re_patterns[
@@ -819,6 +850,20 @@ class TextParser(FileParser):
                         self._results[quantity.name] = (
                             data if quantity.repeats else data[0]
                         )
+
+                    for pointers in self._line_pointers[n_q]:
+                        if None not in pointers:
+                            captured_spans = [
+                                pointer
+                                for _, matches in pointers
+                                for pointer in matches
+                            ]
+                            if captured_spans:
+                                self._parsed_pointers.extend(captured_spans)
+                            else:
+                                self._parsed_pointers.append(
+                                    (pointers[0][0][0], pointers[-1][0][1])
+                                )
 
     def parse(self, key=None):
         """
