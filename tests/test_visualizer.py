@@ -84,6 +84,61 @@ def test_text_visualizer_marks_only_leaves_and_colors_subparser_groups(tmp_path)
     assert 'B_START\n<mark' not in html
 
 
+def test_line_parser_records_only_leaf_capture_groups_for_visualization(tmp_path):
+    mainfile = tmp_path / 'output.txt'
+    mainfile.write_text('before\nenergy = 1.5\nafter\n')
+    parser = TextParser(
+        str(mainfile), quantities=[Quantity('energy', r'energy\s*=\s*([\d.]+)')]
+    )
+    parser.line_parsing = True
+
+    html = parser.visualize().to_html()
+
+    assert '<mark data-byte-start="16" data-byte-end="19">1.5</mark>' in html
+
+
+def test_line_parser_highlights_complete_blocks_without_capture_groups(tmp_path):
+    mainfile = tmp_path / 'output.txt'
+    mainfile.write_text('before\nSTART\nparsed value\nFINISHED\nafter\n')
+    parser = TextParser(
+        str(mainfile),
+        quantities=[Quantity('block', [r'START', r'FINISHED'], convert=False)],
+    )
+    parser.line_parsing = True
+
+    html = parser.visualize().to_html()
+
+    assert (
+        '<mark data-byte-start="7" data-byte-end="34">START\nparsed value\nFINISHED</mark>'
+        in html
+    )
+
+
+def test_line_parser_visualizer_parses_nested_blocks(tmp_path):
+    mainfile = tmp_path / 'output.txt'
+    mainfile.write_text('BEGIN\nvalue = 1\nEND\n')
+    parser = TextParser(
+        str(mainfile),
+        quantities=[
+            Quantity(
+                'section',
+                [r'BEGIN', r'END'],
+                sub_parser=TextParser(
+                    quantities=[Quantity('value', r'value\s*=\s*(\d+)')]
+                ),
+            )
+        ],
+    )
+    parser.line_parsing = True
+
+    html = parser.visualize().to_html()
+
+    assert (
+        '<mark data-byte-start="14" data-byte-end="15" style="background-color:#fff59d;">1</mark>'
+        in html
+    )
+
+
 def test_visualizer_show_opens_a_browser_tab(tmp_path, monkeypatch):
     mainfile = tmp_path / 'output.txt'
     destination = tmp_path / 'visualizations' / 'parsed-block.html'
