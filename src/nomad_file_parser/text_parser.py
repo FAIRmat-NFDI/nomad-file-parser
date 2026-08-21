@@ -21,6 +21,7 @@ import io
 import mmap
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,15 @@ from nomad.metainfo import Quantity as mQuantity
 from nomad.utils import get_logger
 
 from .file_parser import FileParser
+
+
+@dataclass(frozen=True)
+class ParsedPointer:
+    """A parsed source range and the quantity that owns it."""
+
+    start: int
+    end: int
+    quantity_name: str | None = None
 
 
 class ParsePattern:
@@ -330,7 +340,7 @@ class TextParser(FileParser):
                 )
                 self._quantities.pop(i)
         self._re_findall: re.Pattern = None
-        self._parsed_pointers: list[tuple[int, int]] = []
+        self._parsed_pointers: list[ParsedPointer] = []
 
     def copy(self):
         """
@@ -452,59 +462,77 @@ class TextParser(FileParser):
 
     def visualize(
         self,
-        context_lines: int = 3,
+        context_lines: int | None = None,
         key: str | None = None,
-        full_file: bool = True,
+        leaves_only: bool = True,
     ):
-        """Create a source view highlighting this text parser's leaf quantities."""
+        """Create a source view highlighting parsed quantities.
+
+        Args:
+            context_lines: Surrounding lines to include in a compact source view.
+                ``None`` (the default) displays the complete file.
+            key: Quantity name or dotted quantity path to highlight. If omitted,
+                all parsed quantities are shown.
+            leaves_only: Show only quantities without nested parsers. This is the
+                default; set to ``False`` to include ancestors, made progressively
+                more transparent.
+        """
         from .visualizer import TextParserVisualizer
 
-        self.parse()
-        self._parse_visualization_children()
-        return TextParserVisualizer(
-            self, context_lines=context_lines, key=key, full_file=full_file
-        )
+        def parse_visualization_children(parser: TextParser):
+            """Parse deferred nested parsers so all leaf pointers are available."""
+            for value in parser._results.values():
+                parsers = value if isinstance(value, list) else [value]
+                for child in parsers:
+                    if isinstance(child, TextParser):
+                        if child._results is None:
+                            child.parse()
+                        parse_visualization_children(child)
 
-    def _parse_visualization_children(self):
-        """Parse deferred nested parsers so all leaf pointers are available."""
-        for value in self._results.values():
-            parsers = value if isinstance(value, list) else [value]
-            for parser in parsers:
-                if isinstance(parser, TextParser):
-                    if parser._results is None:
-                        parser.parse()
-                    parser._parse_visualization_children()
+        self.parse()
+        parse_visualization_children(self)
+        return TextParserVisualizer(
+            self,
+            context_lines=context_lines,
+            key=key,
+            leaves_only=leaves_only,
+        )
 
     def show_visualization(
         self,
-        context_lines: int = 3,
+        context_lines: int | None = None,
         path: str | Path | None = None,
         key: str | None = None,
-        full_file: bool = True,
+        leaves_only: bool = True,
     ) -> Path:
-        """Open the text-parser visualization in a browser tab."""
+        """Open the text-parser visualization in a browser tab.
+
+        Args:
+            context_lines: Surrounding lines to include in a compact source view.
+                ``None`` (the default) displays the complete file.
+            key: Quantity name or dotted quantity path to highlight. If omitted,
+                all parsed quantities are shown.
+            leaves_only: Show only quantities without nested parsers. This is the
+                default; set to ``False`` to include ancestors, made progressively
+                more transparent.
+        """
         return self.visualize(
-            context_lines=context_lines, key=key, full_file=full_file
+            context_lines=context_lines,
+            key=key,
+            leaves_only=leaves_only,
         ).show(path)
 
-    def _record_match(self, match):
+    def _record_match(self, match, quantity_name: str | None = None):
         """Record leaf capture spans while parsing, for later visualization."""
         spans = [
             match.span(index + 1)
             for index in range(len(match.groups()))
             if match.span(index + 1) != (-1, -1)
         ] or [match.span()]
-        self._parsed_pointers.extend(self._absolute_spans(spans))
-
-    def _record_matches(self, quantity: Quantity, block):
-        matches = (
-            quantity.re_pattern.finditer(block)
-            if quantity.repeats
-            else [quantity.re_pattern.search(block)]
+        absolute_spans = self._absolute_spans(spans)
+        self._parsed_pointers.extend(
+            ParsedPointer(start, end, quantity_name) for start, end in absolute_spans
         )
-        for match in matches:
-            if match is not None:
-                self._record_match(match)
 
     def _absolute_spans(self, spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
         """Map spans in the loaded block back to the original main file."""
@@ -579,6 +607,17 @@ class TextParser(FileParser):
         """
         Parse a list of quantities.
         """
+
+        def record_matches(quantity: Quantity, block):
+            matches = (
+                quantity.re_pattern.finditer(block)
+                if quantity.repeats
+                else [quantity.re_pattern.search(block)]
+            )
+            for match in matches:
+                if match is not None:
+                    self._record_match(match, quantity.name)
+
         if len(self._results) == 0 and self._re_findall is not None:
             # attempt at optimization
             re_findall_b = self._re_findall
@@ -634,7 +673,7 @@ class TextParser(FileParser):
                 continue
 
             self._add_value(quantity, values, units)
-            self._record_matches(quantity, block)
+            record_matches(quantity, block)
 
     def _parse_quantity(self, quantity: Quantity):
         """
@@ -659,6 +698,13 @@ class TextParser(FileParser):
                     sub_parser.findlazy = self.findlazy
                 if not res.groups():
                     continue
+                scope_spans = self._absolute_spans(
+                    [(res.span(1)[0], res.span(len(res.groups()))[1])]
+                )
+                self._parsed_pointers.extend(
+                    ParsedPointer(start, end, quantity.name)
+                    for start, end in scope_spans
+                )
                 start = res.span(1)[0]
                 sub_parser._file_offset = self._file_offset + start
                 sub_parser._file_handler = [
@@ -668,7 +714,7 @@ class TextParser(FileParser):
                 value.append(sub_parser if sub_parser.findlazy else sub_parser.parse())
 
             else:
-                self._record_match(res)
+                self._record_match(res, quantity.name)
                 try:
                     unit = res.groupdict().get(f'__unit_{quantity.name}', None)
                     units.append(unit.decode() if unit is not None else None)
@@ -816,6 +862,13 @@ class TextParser(FileParser):
                         self._results.setdefault(
                             quantity.name, data if quantity.repeats else data[0]
                         )
+                    for blocks in self._blocks[n_q]:
+                        if None not in blocks:
+                            scope_start = blocks[0][0][0]
+                            scope_end = blocks[-1][-1][1]
+                            self._parsed_pointers.append(
+                                ParsedPointer(scope_start, scope_end, quantity.name)
+                            )
                 else:
                     blocks = self._blocks.pop(n_q)
                     self._blocks.insert(n_q, None)
@@ -859,10 +912,17 @@ class TextParser(FileParser):
                                 for pointer in matches
                             ]
                             if captured_spans:
-                                self._parsed_pointers.extend(captured_spans)
+                                self._parsed_pointers.extend(
+                                    ParsedPointer(start, end, quantity.name)
+                                    for start, end in captured_spans
+                                )
                             else:
                                 self._parsed_pointers.append(
-                                    (pointers[0][0][0], pointers[-1][0][1])
+                                    ParsedPointer(
+                                        pointers[0][0][0],
+                                        pointers[-1][0][1],
+                                        quantity.name,
+                                    )
                                 )
 
     def parse(self, key=None):
