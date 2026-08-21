@@ -11,7 +11,17 @@ from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .file_parser import FileParser
+    from .text_parser import TextParser
+
+
+DEFAULT_PARSED_BLOCK_COLORS = (
+    '#fff59d',
+    '#b2dfdb',
+    '#bbdefb',
+    '#e1bee7',
+    '#ffccbc',
+    '#c8e6c9',
+)
 
 
 @dataclass(frozen=True)
@@ -20,11 +30,12 @@ class ParsedBlock:
 
     start: int
     end: int
-    color: str | None = None
+    quantity_name: str | None = None
+    depth: int | None = None
 
 
 class TextParserVisualizer:
-    """Render leaf quantities parsed by a :class:`TextParser`.
+    """Render quantities parsed by a :class:`TextParser`.
 
     The visualizer is deliberately HTML based: a returned instance renders directly
     in Jupyter notebooks and :meth:`to_html` can be embedded in a web view.  It does
@@ -33,17 +44,26 @@ class TextParserVisualizer:
 
     def __init__(
         self,
-        parser: FileParser,
-        context_lines: int = 3,
+        parser: TextParser,
+        context_lines: int | None = None,
         key: str | None = None,
-        full_file: bool = True,
+        leaves_only: bool = True,
     ):
-        if context_lines < 0:
+        """Initialize a source view.
+
+        By default, only quantities without nested parsers are displayed. Set
+        ``leaves_only=False`` to display all parsed quantities; parent quantities
+        are progressively more transparent than their descendants.
+        Set ``context_lines`` to a non-negative integer to show only the
+        highlighted lines and that many surrounding lines. The default,
+        ``None``, displays the complete file.
+        """
+        if context_lines is not None and context_lines < 0:
             raise ValueError('context_lines must be greater than or equal to zero')
         self.parser = parser
         self.context_lines = context_lines
         self.key = key
-        self.full_file = full_file
+        self.leaves_only = leaves_only
         self.source = self._read_source()
         self.blocks = self._blocks()
 
@@ -56,69 +76,118 @@ class TextParserVisualizer:
     def _blocks(self) -> list[ParsedBlock]:
         """Return parser-local spans as absolute byte ranges.
 
-        ``TextParser`` stores nested parser selections in ``_file_handler`` as
-        ranges relative to ``_file_offset``. Other parser implementations normally
-        consume the complete input, which is represented by one full-file range.
+        When ``leaves_only`` is set, container spans are omitted and only leaf
+        quantity spans are returned.
         """
-        handler = getattr(self.parser, '_file_handler', None)
-        offset = getattr(self.parser, '_file_offset', 0) or 0
-        length = getattr(self.parser, '_file_length', 0) or 0
-        if hasattr(self.parser, '_parsed_pointers'):
-            blocks = self._parsed_blocks()
-        elif isinstance(handler, list) and all(
-            isinstance(span, tuple) and len(span) == 2 for span in handler
-        ):
-            blocks = [
-                ParsedBlock(offset + start, offset + end) for start, end in handler
-            ]
-        elif length > 0:
-            blocks = [ParsedBlock(offset, offset + length)]
-        else:
-            blocks = [ParsedBlock(0, len(self.source))]
+
+        def matches_key(quantity_name: str | None) -> bool:
+            """Return whether a displayed quantity matches ``key``."""
+            if quantity_name is None or self.key is None:
+                return False
+            _, _, relative_name = quantity_name.partition('.')
+            candidates = {
+                quantity_name,
+                relative_name,
+                quantity_name.rsplit('.', 1)[-1],
+            }
+            return self.key in candidates
+
+        self._container_quantities: set[str] = set()
+        blocks = self._parsed_blocks()
 
         # Clamp potentially stale offsets and remove empty ranges before rendering.
-        return [
+        blocks = [
             ParsedBlock(
-                max(0, block.start), min(len(self.source), block.end), block.color
+                max(0, block.start),
+                min(len(self.source), block.end),
+                block.quantity_name,
+                block.depth,
             )
             for block in blocks
             if block.start < len(self.source)
             and block.end > 0
             and block.start < block.end
         ]
+        if self.key is not None:
+            blocks = [block for block in blocks if matches_key(block.quantity_name)]
+        if self.leaves_only:
+            blocks = [
+                block
+                for block in blocks
+                if block.quantity_name not in self._container_quantities
+            ]
+        return [
+            ParsedBlock(
+                block.start,
+                block.end,
+                block.quantity_name,
+                block.depth,
+            )
+            for block in sorted(blocks, key=lambda item: (item.start, item.end))
+        ]
 
     def _parsed_blocks(self) -> list[ParsedBlock]:
-        """Resolve pointer ownership and colors from the parsed parser tree."""
-        colors = ['#fff59d', '#b2dfdb', '#bbdefb', '#e1bee7', '#ffccbc', '#c8e6c9']
-        color_index = 0
+        """Resolve pointer ownership from the parsed parser tree."""
 
         def children(parser):
-            for value in (parser._results or {}).values():
+            for name, value in (parser._results or {}).items():
                 if hasattr(value, '_parsed_pointers'):
-                    yield value
+                    yield name, value
                 elif isinstance(value, list):
                     yield from (
-                        item for item in value if hasattr(item, '_parsed_pointers')
+                        (f'{name}[{index}]', item)
+                        for index, item in enumerate(value)
+                        if hasattr(item, '_parsed_pointers')
                     )
 
-        def collect(parser, color=None):
-            nonlocal color_index
+        def collect(parser, quantity_prefix=None, depth=0):
+            child_parsers = list(children(parser))
+            child_names = {
+                child_label.split('[', 1)[0] for child_label, _ in child_parsers
+            }
+            self._container_quantities.update(
+                f'{quantity_prefix}.{child_name}' if quantity_prefix else child_name
+                for child_name in child_names
+            )
             blocks = [
-                ParsedBlock(start, end, color) for start, end in parser._parsed_pointers
+                ParsedBlock(
+                    pointer.start,
+                    pointer.end,
+                    quantity_name=(
+                        f'{quantity_prefix}.{pointer.quantity_name}'
+                        if quantity_prefix and pointer.quantity_name
+                        else pointer.quantity_name or quantity_prefix
+                    ),
+                    depth=depth,
+                )
+                for pointer in parser._parsed_pointers
             ]
-            for child in children(parser):
-                child_color = colors[color_index % len(colors)]
-                color_index += 1
-                blocks.extend(collect(child, child_color))
+            for child_label, child in child_parsers:
+                # Repeated sub-parsers share one logical parent quantity. Keep
+                # the repeat index in the display label, but not in the parent
+                # path so child blocks can identify their enclosing scope.
+                child_name = child_label.split('[', 1)[0]
+                child_id = (
+                    f'{quantity_prefix}.{child_name}' if quantity_prefix else child_name
+                )
+                blocks.extend(collect(child, child_id, depth + 1))
             return blocks
 
-        return collect(self.parser)
+        parser_label = type(self.parser).__name__
+        return collect(self.parser, quantity_prefix=parser_label)
 
     def _visible_range(self) -> tuple[int, int]:
         if not self.blocks:
             return (0, 0)
-        starts = [block.start for block in self.blocks]
-        ends = [block.end for block in self.blocks]
+        assert self.context_lines is not None
+        leaf_blocks = [
+            block
+            for block in self.blocks
+            if block.quantity_name not in self._container_quantities
+        ]
+        blocks = leaf_blocks or self.blocks
+        starts = [block.start for block in blocks]
+        ends = [block.end for block in blocks]
         line_starts = [0]
         line_starts.extend(
             index + 1 for index, byte in enumerate(self.source) if byte == 10
@@ -138,7 +207,26 @@ class TextParserVisualizer:
 
     def to_html(self) -> str:
         """Return a self-contained HTML source view with parsed ranges marked."""
-        start, end = (0, len(self.source)) if self.full_file else self._visible_range()
+
+        def transparent_color(color: str, opacity: float) -> str:
+            """Return a translucent CSS color while preserving the block hue."""
+            if len(color) == 7 and color.startswith('#'):
+                red, green, blue = (
+                    int(color[index : index + 2], 16) for index in (1, 3, 5)
+                )
+                return f'rgba({red}, {green}, {blue}, {opacity})'
+            return color
+
+        def opacity_for_depth(depth: int, max_depth: int) -> float:
+            """Return a depth-based opacity, keeping the deepest level opaque."""
+            minimum_opacity = 0.35
+            return minimum_opacity + (1 - minimum_opacity) * depth / max_depth
+
+        start, end = (
+            (0, len(self.source))
+            if self.context_lines is None
+            else self._visible_range()
+        )
         blocks = sorted(self.blocks, key=lambda block: (block.start, block.end))
         positions = {start, end}
         for block in blocks:
@@ -147,24 +235,49 @@ class TextParserVisualizer:
         positions = sorted(positions)
 
         rendered = []
+        color_by_quantity = {}
+        max_depth = max(
+            (block.depth for block in blocks if block.depth is not None), default=0
+        )
+        for block in blocks:
+            quantity = block.quantity_name or f'{block.start}:{block.end}'
+            color_by_quantity.setdefault(
+                quantity,
+                DEFAULT_PARSED_BLOCK_COLORS[
+                    len(color_by_quantity) % len(DEFAULT_PARSED_BLOCK_COLORS)
+                ],
+            )
         for left, right in zip(positions, positions[1:]):
             text = escape(self.source[left:right].decode('utf-8', errors='replace'))
-            highlighted = next(
-                (
-                    block
-                    for block in blocks
-                    if block.start <= left and right <= block.end
-                ),
-                None,
+            matching_blocks = [
+                block for block in blocks if block.start <= left and right <= block.end
+            ]
+            highlighted = max(
+                matching_blocks,
+                key=lambda block: block.depth if block.depth is not None else -1,
+                default=None,
             )
             if highlighted:
-                color = (
-                    f' style="background-color:{highlighted.color};"'
-                    if highlighted.color
+                background_color = color_by_quantity[
+                    highlighted.quantity_name
+                    or f'{highlighted.start}:{highlighted.end}'
+                ]
+                if (
+                    highlighted.depth is not None
+                    and highlighted.quantity_name in self._container_quantities
+                ):
+                    background_color = transparent_color(
+                        background_color,
+                        opacity_for_depth(highlighted.depth, max_depth),
+                    )
+                label = (
+                    f' title="{escape(highlighted.quantity_name.rsplit(".", 1)[-1], quote=True)}"'
+                    if highlighted.quantity_name
                     else ''
                 )
                 rendered.append(
-                    f'<mark data-byte-start="{left}" data-byte-end="{right}"{color}>{text}</mark>'
+                    f'<mark data-byte-start="{left}" data-byte-end="{right}" '
+                    f'style="background-color:{background_color};"{label}>{text}</mark>'
                 )
             else:
                 rendered.append(text)
