@@ -1,3 +1,5 @@
+import mmap
+
 import numpy as np
 import pint
 import pytest
@@ -55,6 +57,44 @@ class TestFileParser:
         ]
         text_parser.mainfile = mainfile
         assert text_parser.program == 'vasp'
+
+    def test_plain_file_uses_mmap(self, text_parser):
+        text_parser.quantities = [
+            Quantity('program', r'name="program" type="string">(.+?) *<')
+        ]
+        text_parser.mainfile = 'tests/data/parsers/vasp/vasp.xml'
+        text_parser.parse('program')
+        assert isinstance(text_parser._file_handler, mmap.mmap)
+
+    def test_gzip_does_not_use_mmap(self, text_parser):
+        text_parser.quantities = [
+            Quantity('program', r'name="program" type="string">(.+?) *<')
+        ]
+        text_parser.mainfile = 'tests/data/parsers/vasp_compressed/vasp.xml.gz'
+        text_parser.parse('program')
+        assert isinstance(text_parser._file_handler, list)
+
+    def test_deleted_file_handler_is_recreated(self, text_parser):
+        text_parser.quantities = [
+            Quantity('program', r'name="program" type="string">(.+?) *<')
+        ]
+        text_parser.mainfile = 'tests/data/parsers/vasp/vasp.xml'
+        text_parser.parse('program')
+        old_handler = text_parser._file_handler
+        del text_parser._file_handler
+        text_parser._results.pop('program', None)
+        try:
+            assert text_parser.get('program') == 'vasp'
+        finally:
+            if old_handler is not None:
+                try:
+                    old_handler.close()
+                except Exception:
+                    pass
+
+    def test_missing_private_attr_raises(self, text_parser):
+        with pytest.raises(AttributeError):
+            _ = text_parser._does_not_exist
 
     def test_get(self, text_parser):
         text_parser.quantities = [
@@ -191,6 +231,23 @@ class TestTextParser:
         assert parser2.mainfile == parser.mainfile
         assert parser2.quantities == parser.quantities
         assert parser2._results != parser._results
+
+    def test_findall_defaults_to_false(self, parser):
+        assert parser.findall is False
+
+    def test_to_data_parses_integer_arrays(self):
+        values = Quantity('values', r'([\d\s]+)').to_data('24 24 24')
+        assert np.issubdtype(values.dtype, np.integer)
+        assert (values == [24, 24, 24]).all()
+
+    def test_to_data_keeps_float_arrays(self):
+        values = Quantity('values', r'([\d\.\s]+)').to_data('1.5 2.5 3.5')
+        assert np.issubdtype(values.dtype, np.floating)
+        assert (values == [1.5, 2.5, 3.5]).all()
+
+    def test_to_data_does_not_accept_partial_numeric_tokens(self):
+        values = Quantity('values', r'(.+)').to_data('1 2 abc')
+        assert values == [1, 2, 'abc']
 
     def test_findall(self, parser, quantity_string, quantity_float, quantity_repeats):
         parser.quantities = [

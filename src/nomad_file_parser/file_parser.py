@@ -261,9 +261,10 @@ class FileParser(ABC):
     def close(self):
         if self._mainfile_obj:
             self._mainfile_obj.close()
-        if self._file_handler is not None:
+        handler = self.__dict__.get('_file_handler')
+        if handler is not None:
             try:
-                self._file_handler.close()
+                handler.close()
             except Exception:
                 pass
             self._file_handler = None

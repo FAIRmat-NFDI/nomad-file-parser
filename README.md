@@ -71,6 +71,22 @@ whitespace-separated captures are converted to numbers where possible. Use
 when the default conversion is not appropriate. Set `repeats=True` for values
 that occur more than once.
 
+### Matching performance
+
+The default is lazy and usually the right starting point, but the faster option
+depends on how much of the file you will read:
+
+| Option | When it is faster | Caution |
+| --- | --- | --- |
+| `findall=False` (default) | You only `get()` a few keys. Each call scans for that quantity only. | Accessing many keys re-scans the file each time. Call `parse()` once, or switch to `findall=True`, if you will read most quantities. |
+| `findall=True` | You parse the whole file. Non-nested quantities are matched in one combined `re.findall`. | Patterns must not overlap. A large union of complex regexes can be *much* slower than per-quantity scans because of backtracking. Nested `sub_parser` quantities are still matched separately. |
+| `line_parsing=True` | Very large files that should not be mapped as one search block. | Usually slower than mmap + regex on moderate files. Extra span bookkeeping is always built, even when visualization is off. |
+| `record_spans=True` | You will call `visualize()` and want spans from the first parse. | Records source ranges while matching (including a second scan after `findall`). Leave this off in production parsers; `visualize()` turns it on and re-parses when needed. |
+
+Uncompressed files are memory-mapped. Compressed `.gz`, `.bz2`, `.xz`, `.tar`,
+and `.tgz` files cannot be mapped safely and are read as a byte block instead,
+which is slower for large inputs.
+
 ### Parse line by line
 
 For files that should be processed incrementally, enable line parsing on the
