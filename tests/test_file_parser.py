@@ -2,14 +2,15 @@ import numpy as np
 import pint
 import pytest
 from nomad.datamodel.metainfo.system import Atoms
-from nomad.parsing.file_parser import (
+from nomad.units import ureg
+
+from nomad_file_parser import (
     FileParser,
     ParsePattern,
     Quantity,
     TextParser,
     XMLParser,
 )
-from nomad.units import ureg
 
 
 class TestFileParser:
@@ -195,6 +196,7 @@ class TestTextParser:
         parser.quantities = [
             q['quantity'] for q in [quantity_string, quantity_float, quantity_repeats]
         ]
+        parser.findall = True
         assert parser.findall
         spin = parser.get(quantity_string['quantity'].name)
         volume = parser.get(quantity_float['quantity'].name)

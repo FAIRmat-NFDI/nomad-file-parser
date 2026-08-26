@@ -17,9 +17,13 @@
 #
 
 
+import bz2
+import gzip
 import io
+import lzma
 import mmap
 import re
+import tarfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +35,17 @@ from nomad.metainfo import Quantity as mQuantity
 from nomad.utils import get_logger
 
 from .file_parser import FileParser
+
+
+def _is_numeric_dtype(dtype: Any) -> bool:
+    if dtype is None:
+        return False
+    if dtype in (int, float, complex):
+        return True
+    try:
+        return np.issubdtype(dtype, np.number)
+    except Exception:
+        return False
 
 
 @dataclass(frozen=True)
@@ -169,7 +184,14 @@ class Quantity:
             re_patterns = [re_pattern.re_pattern]
         else:
             re_patterns = re_pattern
-        self.re_patterns = [re.compile(p.encode()) for p in re_patterns]
+        self.re_patterns = [
+            p
+            if isinstance(p, re.Pattern) and isinstance(p.pattern, bytes)
+            else re.compile(p.pattern.encode(), p.flags)
+            if isinstance(p, re.Pattern)
+            else re.compile(p.encode())
+            for p in re_patterns
+        ]
         self.multiline = kwargs.get(
             'multiline', isinstance(re_pattern, str) and len(re_patterns) == 1
         )
@@ -191,6 +213,12 @@ class Quantity:
         if isinstance(self._re_pattern, str):
             re_pattern = self._re_pattern.replace('__unit', f'__unit_{self.name}')
             self._re_pattern = re.compile(re_pattern.encode())
+        elif isinstance(self._re_pattern, re.Pattern) and isinstance(
+            self._re_pattern.pattern, str
+        ):
+            self._re_pattern = re.compile(
+                self._re_pattern.pattern.encode(), self._re_pattern.flags
+            )
         return self._re_pattern
 
     @re_pattern.setter
@@ -224,10 +252,6 @@ class Quantity:
                 try:
                     dtype = float if self.dtype is None else self.dtype
                     val_test = np.array(val, dtype=dtype)
-                    if self.dtype is None:
-                        if np.all(np.mod(val_test, 1) == 0):
-                            val_test = np.array(val_test, dtype=int)
-                            dtype = int
                     return val_test
 
                 except Exception:
@@ -246,6 +270,32 @@ class Quantity:
         if self.comment is not None:
             if val_raw.strip()[0] == self.comment:
                 return
+
+        if (
+            self.str_operation is None
+            and self.flatten
+            and self.convert
+            and (self.dtype is None or _is_numeric_dtype(self.dtype))
+        ):
+            try:
+                data = np.fromstring(
+                    val_raw.strip(), sep=' ', dtype=self.dtype or float
+                )
+                if len(data) > 0:
+                    if self.reduce and len(data) == 1:
+                        val = data[0]
+                        if self.dtype is None and float(val).is_integer():
+                            data = int(val)
+                        else:
+                            data = val
+                    elif self.shape:
+                        try:
+                            data = np.reshape(data, self.shape)
+                        except Exception:
+                            pass
+                    return data
+            except Exception:
+                pass
 
         data: Any = val_raw
 
@@ -306,7 +356,7 @@ class TextParser(FileParser):
             logger = get_logger(__name__)
         super().__init__(mainfile, logger=logger, open=kwargs.get('open', None))
         self._quantities: list[Quantity] = quantities
-        self.findall: bool = kwargs.get('findall', True)
+        self.findall: bool = kwargs.get('findall', False)
         self.findlazy: bool = kwargs.get('findlazy', None)
         self._file_length: int = kwargs.get('file_length', 0)
         self._file_offset: int = kwargs.get('file_offset', 0)
@@ -341,6 +391,7 @@ class TextParser(FileParser):
                 self._quantities.pop(i)
         self._re_findall: re.Pattern = None
         self._parsed_pointers: list[ParsedPointer] = []
+        self._record_spans: bool = kwargs.get('record_spans', False)
 
     def copy(self):
         """
@@ -355,6 +406,7 @@ class TextParser(FileParser):
             allow_overlap=self.allow_overlap,
             max_lines=self.max_lines,
             line_parsing=self.line_parsing,
+            record_spans=self._record_spans,
         )
 
     def reset(self):
@@ -422,16 +474,39 @@ class TextParser(FileParser):
         Memory mapped representation of the file.
         """
         if self._file_handler is None:
+            is_compressed = isinstance(self.mainfile, str) and self.mainfile.endswith(
+                ('.gz', '.bz2', '.xz', '.tar')
+            )
             with self.open(self.mainfile, 'rb') as f:
-                if isinstance(f, io.TextIOWrapper):
-                    self._file_handler = mmap.mmap(
-                        f.fileno(),
-                        self._file_length,
-                        access=mmap.ACCESS_COPY,
-                        offset=self._file_offset,
+                if (
+                    not is_compressed
+                    and not isinstance(
+                        f, (gzip.GzipFile, bz2.BZ2File, lzma.LZMAFile, tarfile.TarFile)
                     )
-                    # set the extra chunk loaded before the intended offset to empty
-                    self._file_handler[: self._file_pad] = b' ' * self._file_pad
+                    and (
+                        hasattr(f, 'fileno')
+                        or isinstance(
+                            f,
+                            (
+                                io.BufferedReader,
+                                io.BufferedRandom,
+                                io.FileIO,
+                                io.TextIOWrapper,
+                            ),
+                        )
+                    )
+                ):
+                    try:
+                        self._file_handler = mmap.mmap(
+                            f.fileno(),
+                            self._file_length,
+                            access=mmap.ACCESS_COPY,
+                            offset=self._file_offset,
+                        )
+                        # set the extra chunk loaded before the intended offset to empty
+                        self._file_handler[: self._file_pad] = b' ' * self._file_pad
+                    except Exception:
+                        self._file_handler = [(0, f.seek(0, 2))]
                 else:
                     self._file_handler = [(0, f.seek(0, 2))]
             self._file_pad = 0
@@ -481,15 +556,20 @@ class TextParser(FileParser):
 
         def parse_visualization_children(parser: TextParser):
             """Parse deferred nested parsers so all leaf pointers are available."""
-            for value in parser._results.values():
+            for value in (parser._results or {}).values():
                 parsers = value if isinstance(value, list) else [value]
                 for child in parsers:
                     if isinstance(child, TextParser):
-                        if child._results is None:
+                        if child._results is None or not child._parsed_pointers:
+                            child._record_spans = True
                             child.parse()
                         parse_visualization_children(child)
 
-        self.parse()
+        self._record_spans = True
+        if self._results is None or not self._parsed_pointers:
+            self.reset()
+            self._record_spans = True
+            self.parse()
         parse_visualization_children(self)
         return TextParserVisualizer(
             self,
@@ -593,6 +673,9 @@ class TextParser(FileParser):
         """
         Loads the file block to be parsed.
         """
+        if self._file_handler is None:
+            _ = self.file_mmap
+
         if not isinstance(self._file_handler, list):
             return self._file_handler
 
@@ -673,7 +756,8 @@ class TextParser(FileParser):
                 continue
 
             self._add_value(quantity, values, units)
-            record_matches(quantity, block)
+            if self._record_spans:
+                record_matches(quantity, block)
 
     def _parse_quantity(self, quantity: Quantity):
         """
@@ -694,17 +778,19 @@ class TextParser(FileParser):
                 sub_parser = quantity.sub_parser.copy()
                 sub_parser.mainfile = self.mainfile
                 sub_parser.logger = self.logger
+                sub_parser._record_spans = self._record_spans
                 if sub_parser.findlazy is None:
                     sub_parser.findlazy = self.findlazy
                 if not res.groups():
                     continue
-                scope_spans = self._absolute_spans(
-                    [(res.span(1)[0], res.span(len(res.groups()))[1])]
-                )
-                self._parsed_pointers.extend(
-                    ParsedPointer(start, end, quantity.name)
-                    for start, end in scope_spans
-                )
+                if self._record_spans:
+                    scope_spans = self._absolute_spans(
+                        [(res.span(1)[0], res.span(len(res.groups()))[1])]
+                    )
+                    self._parsed_pointers.extend(
+                        ParsedPointer(start, end, quantity.name)
+                        for start, end in scope_spans
+                    )
                 start = res.span(1)[0]
                 sub_parser._file_offset = self._file_offset + start
                 sub_parser._file_handler = [
@@ -714,7 +800,8 @@ class TextParser(FileParser):
                 value.append(sub_parser if sub_parser.findlazy else sub_parser.parse())
 
             else:
-                self._record_match(res, quantity.name)
+                if self._record_spans:
+                    self._record_match(res, quantity.name)
                 try:
                     unit = res.groupdict().get(f'__unit_{quantity.name}', None)
                     units.append(unit.decode() if unit is not None else None)
@@ -862,13 +949,14 @@ class TextParser(FileParser):
                         self._results.setdefault(
                             quantity.name, data if quantity.repeats else data[0]
                         )
-                    for blocks in self._blocks[n_q]:
-                        if None not in blocks:
-                            scope_start = blocks[0][0][0]
-                            scope_end = blocks[-1][-1][1]
-                            self._parsed_pointers.append(
-                                ParsedPointer(scope_start, scope_end, quantity.name)
-                            )
+                    if self._record_spans:
+                        for blocks in self._blocks[n_q]:
+                            if None not in blocks:
+                                scope_start = blocks[0][0][0]
+                                scope_end = blocks[-1][-1][1]
+                                self._parsed_pointers.append(
+                                    ParsedPointer(scope_start, scope_end, quantity.name)
+                                )
                 else:
                     blocks = self._blocks.pop(n_q)
                     self._blocks.insert(n_q, None)
@@ -904,26 +992,27 @@ class TextParser(FileParser):
                             data if quantity.repeats else data[0]
                         )
 
-                    for pointers in self._line_pointers[n_q]:
-                        if None not in pointers:
-                            captured_spans = [
-                                pointer
-                                for _, matches in pointers
-                                for pointer in matches
-                            ]
-                            if captured_spans:
-                                self._parsed_pointers.extend(
-                                    ParsedPointer(start, end, quantity.name)
-                                    for start, end in captured_spans
-                                )
-                            else:
-                                self._parsed_pointers.append(
-                                    ParsedPointer(
-                                        pointers[0][0][0],
-                                        pointers[-1][0][1],
-                                        quantity.name,
+                    if self._record_spans:
+                        for pointers in self._line_pointers[n_q]:
+                            if None not in pointers:
+                                captured_spans = [
+                                    pointer
+                                    for _, matches in pointers
+                                    for pointer in matches
+                                ]
+                                if captured_spans:
+                                    self._parsed_pointers.extend(
+                                        ParsedPointer(start, end, quantity.name)
+                                        for start, end in captured_spans
                                     )
-                                )
+                                else:
+                                    self._parsed_pointers.append(
+                                        ParsedPointer(
+                                            pointers[0][0][0],
+                                            pointers[-1][0][1],
+                                            quantity.name,
+                                        )
+                                    )
 
     def parse(self, key=None):
         """
@@ -975,9 +1064,10 @@ class TextParser(FileParser):
                         self._parse_quantity(quantity)
 
         # free up memory
-        if self.findall:
+        if self.findall or key is None:
             if isinstance(self._file_handler, mmap.mmap):
                 self._file_handler.close()
+                self._file_handler = None
 
         return self
 
