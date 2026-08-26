@@ -267,6 +267,7 @@ class FileParser(ABC):
                 self._file_handler.close()
             except Exception:
                 pass
+            self._file_handler = None
 
 
 class ArchiveWriter(ABC):
