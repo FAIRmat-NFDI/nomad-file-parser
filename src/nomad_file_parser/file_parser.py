@@ -239,10 +239,9 @@ class FileParser(ABC):
         self._results[key] = val
 
     def __getattr__(self, key):
-        if self._results is None:
-            self._results = {}
-            self.parse(key)
-        return self._results.get(key)
+        if key.startswith('_'):
+            raise AttributeError(key)
+        return self.get(key)
 
     def __repr__(self) -> str:
         results = list(self._results.keys()) if self._results else []

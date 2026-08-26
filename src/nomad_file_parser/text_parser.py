@@ -264,12 +264,18 @@ class Quantity:
             else:
                 return val
 
-        if not val_raw:
-            return
+        if isinstance(val_raw, TextParser):
+            return val_raw
 
-        if self.comment is not None:
+        if val_raw is None:
+            return None
+
+        if not val_raw:
+            return None
+
+        if self.comment is not None and isinstance(val_raw, (str, bytes)):
             if val_raw.strip()[0] == self.comment:
-                return
+                return None
 
         if (
             self.str_operation is None
