@@ -223,10 +223,6 @@ class TestTextParser:
         assert value == int(raw)
         assert isinstance(value, int)
 
-    def test_to_data_preserves_large_integers_in_arrays(self):
-        values = Quantity('n', r'(.+)').to_data('100000000000000000000000003 4')
-        assert list(values) == [100000000000000000000000003, 4]
-
     def test_findall(self, parser, quantity_string, quantity_float, quantity_repeats):
         parser.quantities = [
             q['quantity'] for q in [quantity_string, quantity_float, quantity_repeats]

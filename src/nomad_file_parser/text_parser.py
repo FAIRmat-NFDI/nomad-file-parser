@@ -32,38 +32,6 @@ from nomad.utils import get_logger
 
 from .file_parser import FileParser
 
-_UNSET = object()
-
-
-# Complete float literals only. np.fromstring('1.2.3', sep=' ') is 1.2 on NumPy 1.x.
-_FLOAT_TOKEN = re.compile(r'[+-]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?')
-
-
-def _is_numeric_dtype(dtype: Any) -> bool:
-    if dtype is None:
-        return False
-    if dtype in (int, float, complex):
-        return True
-    try:
-        return np.issubdtype(dtype, np.number)
-    except Exception:
-        return False
-
-
-def _is_integer_dtype(dtype: Any) -> bool:
-    if dtype is int:
-        return True
-    try:
-        return np.issubdtype(dtype, np.integer)
-    except Exception:
-        return False
-
-
-def _is_int_token(token: str) -> bool:
-    if token.startswith(('+', '-')):
-        token = token[1:]
-    return bool(token) and token.isdecimal()
-
 
 def _compile_bytes_pattern(pattern: Any) -> re.Pattern:
     if isinstance(pattern, re.Pattern):
@@ -303,16 +271,6 @@ class Quantity:
             if val_raw.strip()[0] == self.comment:
                 return None
 
-        if (
-            self.str_operation is None
-            and self.flatten
-            and self.convert
-            and (self.dtype is None or _is_numeric_dtype(self.dtype))
-        ):
-            data = self._try_parse_numeric(val_raw)
-            if data is not _UNSET:
-                return data
-
         data: Any = val_raw
 
         if self.str_operation is not None:
@@ -332,65 +290,6 @@ class Quantity:
             except Exception:
                 pass
 
-        return data
-
-    def _try_parse_numeric(self, val_raw: Any):
-        """Parse a whitespace-separated numeric block, or return _UNSET to fall back."""
-        if not isinstance(val_raw, (str, bytes)):
-            return _UNSET
-        if isinstance(val_raw, bytes):
-            try:
-                text = val_raw.strip().decode()
-            except UnicodeDecodeError:
-                return _UNSET
-        else:
-            text = val_raw.strip()
-        if not text:
-            return _UNSET
-        tokens = text.split()
-
-        if all(_is_int_token(t) for t in tokens) and (
-            self.dtype is None or _is_integer_dtype(self.dtype)
-        ):
-            values = [int(t) for t in tokens]
-            if self.reduce and len(values) == 1:
-                value = values[0]
-                if self.dtype is None:
-                    return value
-                try:
-                    return self.dtype(value)
-                except (OverflowError, ValueError, TypeError):
-                    return _UNSET
-            try:
-                data = np.array(values, dtype=int if self.dtype is None else self.dtype)
-            except OverflowError:
-                if self.dtype is not None:
-                    return _UNSET
-                data = np.array(values, dtype=object)
-            return self._finish_numeric_array(data)
-
-        if self.dtype is not None and _is_integer_dtype(self.dtype):
-            return _UNSET
-        if not all(_FLOAT_TOKEN.fullmatch(t) for t in tokens):
-            return _UNSET
-        try:
-            data = np.fromstring(text, sep=' ', dtype=self.dtype or float)
-        except (ValueError, TypeError):
-            return _UNSET
-        if len(data) == 0 or len(data) != len(tokens):
-            return _UNSET
-        if self.reduce and len(data) == 1:
-            return data[0]
-        if self.dtype is None:
-            data = _as_int_array_if_integral(data)
-        return self._finish_numeric_array(data)
-
-    def _finish_numeric_array(self, data: np.ndarray):
-        if self.shape:
-            try:
-                data = np.reshape(data, self.shape)
-            except Exception:
-                pass
         return data
 
     def __repr__(self) -> str:
