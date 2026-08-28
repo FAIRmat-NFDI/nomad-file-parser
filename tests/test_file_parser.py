@@ -249,6 +249,20 @@ class TestTextParser:
         values = Quantity('values', r'(.+)').to_data('1 2 abc')
         assert values == [1, 2, 'abc']
 
+    def test_to_data_does_not_parse_version_like_tokens(self):
+        assert Quantity('version', r'(.+)').to_data('1.2.3') == '1.2.3'
+        assert Quantity('version', r'(.+)', dtype=float).to_data('1.2.3') == '1.2.3'
+
+    def test_to_data_preserves_large_integer_precision(self):
+        raw = '100000000000000000000000003'
+        value = Quantity('n', r'(.+)').to_data(raw)
+        assert value == int(raw)
+        assert isinstance(value, int)
+
+    def test_to_data_preserves_large_integers_in_arrays(self):
+        values = Quantity('n', r'(.+)').to_data('100000000000000000000000003 4')
+        assert list(values) == [100000000000000000000000003, 4]
+
     def test_findall(self, parser, quantity_string, quantity_float, quantity_repeats):
         parser.quantities = [
             q['quantity'] for q in [quantity_string, quantity_float, quantity_repeats]
