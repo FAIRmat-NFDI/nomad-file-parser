@@ -1,5 +1,3 @@
-import mmap
-
 import numpy as np
 import pint
 import pytest
@@ -57,40 +55,6 @@ class TestFileParser:
         ]
         text_parser.mainfile = mainfile
         assert text_parser.program == 'vasp'
-
-    def test_plain_file_uses_mmap(self, text_parser):
-        text_parser.quantities = [
-            Quantity('program', r'name="program" type="string">(.+?) *<')
-        ]
-        text_parser.mainfile = 'tests/data/parsers/vasp/vasp.xml'
-        text_parser.parse('program')
-        assert isinstance(text_parser._file_handler, mmap.mmap)
-
-    def test_gzip_does_not_use_mmap(self, text_parser):
-        text_parser.quantities = [
-            Quantity('program', r'name="program" type="string">(.+?) *<')
-        ]
-        text_parser.mainfile = 'tests/data/parsers/vasp_compressed/vasp.xml.gz'
-        text_parser.parse('program')
-        assert isinstance(text_parser._file_handler, list)
-
-    def test_deleted_file_handler_is_recreated(self, text_parser):
-        text_parser.quantities = [
-            Quantity('program', r'name="program" type="string">(.+?) *<')
-        ]
-        text_parser.mainfile = 'tests/data/parsers/vasp/vasp.xml'
-        text_parser.parse('program')
-        old_handler = text_parser._file_handler
-        del text_parser._file_handler
-        text_parser._results.pop('program', None)
-        try:
-            assert text_parser.get('program') == 'vasp'
-        finally:
-            if old_handler is not None:
-                try:
-                    old_handler.close()
-                except Exception:
-                    pass
 
     def test_missing_private_attr_raises(self, text_parser):
         with pytest.raises(AttributeError):

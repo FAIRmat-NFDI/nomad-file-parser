@@ -17,13 +17,9 @@
 #
 
 
-import bz2
-import gzip
 import io
-import lzma
 import mmap
 import re
-import tarfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,10 +32,7 @@ from nomad.utils import get_logger
 
 from .file_parser import FileParser
 
-
 _UNSET = object()
-_COMPRESSED_FILE_TYPES = (gzip.GzipFile, bz2.BZ2File, lzma.LZMAFile, tarfile.TarFile)
-_COMPRESSED_SUFFIXES = ('.gz', '.bz2', '.xz', '.tar', '.tgz')
 
 
 # Complete float literals only. np.fromstring('1.2.3', sep=' ') is 1.2 on NumPy 1.x.
@@ -84,10 +77,6 @@ def _as_int_array_if_integral(data: np.ndarray) -> np.ndarray:
     if np.all(np.mod(data, 1) == 0):
         return data.astype(int)
     return data
-
-
-def _is_compressed_path(path: Any) -> bool:
-    return isinstance(path, str) and path.endswith(_COMPRESSED_SUFFIXES)
 
 
 @dataclass(frozen=True)
@@ -429,7 +418,6 @@ class TextParser(FileParser):
     (catastrophic backtracking). ``line_parsing=True`` avoids mapping the whole block and
     is meant for very large files; it is typically slower on moderate files. Leave
     ``record_spans=False`` unless you need visualization — span recording re-runs matches.
-    Compressed inputs cannot be mmap'd and are read as a byte block instead.
 
     Arguments:
         mainfile: the path to the file to be parsed
@@ -572,38 +560,28 @@ class TextParser(FileParser):
         """
         Memory mapped representation of the file.
         """
-        if self.__dict__.get('_file_handler') is None:
+        if self._file_handler is None:
             with self.open(self.mainfile, 'rb') as f:
-                self._file_handler = self._map_file(f)
+                if isinstance(f, io.TextIOWrapper):
+                    self._file_handler = mmap.mmap(
+                        f.fileno(),
+                        self._file_length,
+                        access=mmap.ACCESS_COPY,
+                        offset=self._file_offset,
+                    )
+                    # set the extra chunk loaded before the intended offset to empty
+                    self._file_handler[: self._file_pad] = b' ' * self._file_pad
+                else:
+                    self._file_handler = [(0, f.seek(0, 2))]
             self._file_pad = 0
         return self._file_handler
-
-    def _map_file(self, f):
-        """Map ``f`` with mmap, or fall back to a full-file span if mapping is unsafe."""
-        if _is_compressed_path(self.mainfile) or isinstance(f, _COMPRESSED_FILE_TYPES):
-            return [(0, f.seek(0, 2))]
-        try:
-            mapped = mmap.mmap(
-                f.fileno(),
-                self._file_length,
-                access=mmap.ACCESS_COPY,
-                offset=self._file_offset,
-            )
-        except (AttributeError, OSError, ValueError, io.UnsupportedOperation):
-            return [(0, f.seek(0, 2))]
-        try:
-            mapped[: self._file_pad] = b' ' * self._file_pad
-        except Exception:
-            mapped.close()
-            return [(0, f.seek(0, 2))]
-        return mapped
 
     @property
     def file_pointers(self):
         """
         List of (start, end) indices of blocks in the file to be parsed.
         """
-        if self.__dict__.get('_file_handler') is None:
+        if self._file_handler is None:
             with self.open(self.mainfile, 'rb') as f:
                 self._file_handler = [(0, f.seek(0, 2))]
         return self._file_handler
@@ -759,9 +737,6 @@ class TextParser(FileParser):
         """
         Loads the file block to be parsed.
         """
-        if self.__dict__.get('_file_handler') is None:
-            _ = self.file_mmap
-
         if not isinstance(self._file_handler, list):
             return self._file_handler
 
@@ -1113,48 +1088,46 @@ class TextParser(FileParser):
             self._parse_line()
             return self
 
-        if self.findall and len(self._results) > 1:
-            return self
-
         if self.file_mmap is None:
             return self
 
-        try:
-            if self.findall:
-                n_results = 0
-                while True:
-                    # use find all to parse quantities with no sub_parser.
-                    quantities_findall = [
-                        q
-                        for q in self.quantities
-                        if q.name not in self._results and q.sub_parser is None
-                    ]
-                    if not quantities_findall:
-                        break
+        if self.findall:
+            if len(self._results) > 1:
+                return self
 
-                    # recursively parse quantities
-                    self._parse_quantities(quantities_findall)
+            n_results = 0
+            while True:
+                # use find all to parse quantities with no sub_parser.
+                quantities_findall = [
+                    q
+                    for q in self.quantities
+                    if q.name not in self._results and q.sub_parser is None
+                ]
+                if not quantities_findall:
+                    break
 
-                    if n_results == len(self._results):
-                        # will stop if no more matches are found
-                        break
-                    n_results = len(self._results)
+                # recursively parse quantities
+                self._parse_quantities(quantities_findall)
 
-                for quantity in self._quantities:
-                    if quantity.sub_parser is not None:
+                if n_results == len(self._results):
+                    # will stop if no more matches are found
+                    break
+                n_results = len(self._results)
+
+            for quantity in self._quantities:
+                if quantity.sub_parser is not None:
+                    self._parse_quantity(quantity)
+
+        else:
+            for quantity in self._quantities:
+                if quantity.name == key or key is None:
+                    if quantity.name not in self._results:
                         self._parse_quantity(quantity)
 
-            else:
-                for quantity in self._quantities:
-                    if quantity.name == key or key is None:
-                        if quantity.name not in self._results:
-                            self._parse_quantity(quantity)
-        finally:
-            if self.findall or key is None:
-                handler = self.__dict__.get('_file_handler')
-                if isinstance(handler, mmap.mmap):
-                    handler.close()
-                    self._file_handler = None
+        # free up memory
+        if self.findall:
+            if isinstance(self._file_handler, mmap.mmap):
+                self._file_handler.close()
 
         return self
 

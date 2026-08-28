@@ -83,10 +83,6 @@ depends on how much of the file you will read:
 | `line_parsing=True` | Very large files that should not be mapped as one search block. | Usually slower than mmap + regex on moderate files. Extra span bookkeeping is always built, even when visualization is off. |
 | `record_spans=True` | You will call `visualize()` and want spans from the first parse. | Records source ranges while matching (including a second scan after `findall`). Leave this off in production parsers; `visualize()` turns it on and re-parses when needed. |
 
-Uncompressed files are memory-mapped. Compressed `.gz`, `.bz2`, `.xz`, `.tar`,
-and `.tgz` files cannot be mapped safely and are read as a byte block instead,
-which is slower for large inputs.
-
 ### Parse line by line
 
 For files that should be processed incrementally, enable line parsing on the
