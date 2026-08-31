@@ -5,6 +5,7 @@ from nomad.datamodel.metainfo.system import Atoms
 from nomad.units import ureg
 
 from nomad_file_parser import (
+    DataTextParser,
     FileParser,
     ParsePattern,
     Quantity,
@@ -520,6 +521,33 @@ class TestTextParser:
             94.47898900
         )
         assert parser.groundstate.final_scf.dos_fermi == pytest.approx(94.47898904)
+
+
+class TestDataTextParser:
+    def test_mainfile_contents(self):
+        expected = np.arange(6, dtype=np.float64)
+        parser = DataTextParser(
+            mainfile_contents=expected.tobytes(), dtype=np.float64
+        )
+        parser.parse(key='data')
+        assert parser._results is not None
+        data = parser.data
+        assert data is not None
+        assert np.array_equal(data, expected)
+        assert np.array_equal(parser.get('data'), expected)
+
+    def test_missing_private_attr_raises(self):
+        parser = DataTextParser(mainfile_contents=b'', dtype=np.float64)
+        with pytest.raises(AttributeError):
+            _ = parser._does_not_exist
+
+    def test_mainfile(self, tmp_path):
+        expected = np.array([[1.0, 2.0], [3.0, 4.0]])
+        data_file = tmp_path / 'data.txt'
+        np.savetxt(data_file, expected)
+        parser = DataTextParser(mainfile=str(data_file))
+        assert np.allclose(parser.data, expected)
+        assert np.allclose(parser.get('data'), expected)
 
 
 class TestXMLParser:

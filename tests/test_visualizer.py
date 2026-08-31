@@ -83,6 +83,24 @@ def test_context_lines_uses_leaf_ranges_when_ancestors_cover_the_file(tmp_path):
     assert 'after' not in html
 
 
+def test_visualize_reparses_after_partial_get(tmp_path):
+    mainfile = tmp_path / 'output.txt'
+    mainfile.write_text('first = 1\nsecond = 2\n')
+    parser = TextParser(
+        str(mainfile),
+        record_spans=True,
+        quantities=[
+            Quantity('first', r'first\s*=\s*(\d+)'),
+            Quantity('second', r'second\s*=\s*(\d+)'),
+        ],
+    )
+    assert parser.get('first') == 1
+
+    names = {block.quantity_name for block in parser.visualize().blocks}
+
+    assert names == {'TextParser.first', 'TextParser.second'}
+
+
 def test_key_limits_highlights_and_context_to_the_selected_quantity(tmp_path):
     mainfile = tmp_path / 'output.txt'
     mainfile.write_text('before\nfirst = 1\nsecond = 2\nafter\n')

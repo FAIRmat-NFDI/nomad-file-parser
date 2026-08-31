@@ -144,6 +144,8 @@ class FileParser(ABC):
         """
         Opens the file with the provided open function or based on the file type.
         """
+        if not mainfile:
+            return
         open_file = self._open
         if open_file is None:
             if mainfile.endswith('.gz'):
@@ -174,7 +176,11 @@ class FileParser(ABC):
         results default will be returned. A pint unit can be provided which is attached
         to the returned value.
         """
-        if self.mainfile is None:
+        if (
+            self.mainfile is None
+            and self._mainfile_obj is None
+            and not getattr(self, '_mainfile_contents', None)
+        ):
             return default
 
         self._key = key

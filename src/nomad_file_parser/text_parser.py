@@ -523,16 +523,22 @@ class TextParser(FileParser):
                 parsers = value if isinstance(value, list) else [value]
                 for child in parsers:
                     if isinstance(child, TextParser):
+                        child._record_spans = True
                         if child._results is None or not child._parsed_pointers:
-                            child._record_spans = True
+                            # Keep _file_handler: nested parsers store the
+                            # captured block there, and reset() would drop it.
+                            child._results = None
+                            child._parsed_pointers = []
                             child.parse()
                         parse_visualization_children(child)
 
+        # Always re-parse with spans. A prior get(key) can fill _results and
+        # even _parsed_pointers for one quantity; skipping parse() would leave
+        # the rest unparsed and unhighlighted.
         self._record_spans = True
-        if self._results is None or not self._parsed_pointers:
-            self.reset()
-            self._record_spans = True
-            self.parse()
+        self._results = None
+        self._parsed_pointers = []
+        self.parse()
         parse_visualization_children(self)
         return TextParserVisualizer(
             self,
@@ -1055,7 +1061,10 @@ class DataTextParser(TextParser):
         super().__init__(**kwargs)
 
     def parse(self, key=None):
-        super().parse(key=key)
+        if self.mainfile is not None:
+            super().parse(key=key)
+        if self._results is None:
+            self._results = dict()
         if key == 'data' or not self._results:
             try:
                 data = None
