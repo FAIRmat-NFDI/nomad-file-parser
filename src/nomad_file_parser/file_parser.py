@@ -144,6 +144,8 @@ class FileParser(ABC):
         """
         Opens the file with the provided open function or based on the file type.
         """
+        if not mainfile:
+            return
         open_file = self._open
         if open_file is None:
             if mainfile.endswith('.gz'):
@@ -174,7 +176,11 @@ class FileParser(ABC):
         results default will be returned. A pint unit can be provided which is attached
         to the returned value.
         """
-        if self.mainfile is None:
+        if (
+            self.mainfile is None
+            and self._mainfile_obj is None
+            and not getattr(self, '_mainfile_contents', None)
+        ):
             return default
 
         self._key = key
@@ -239,10 +245,9 @@ class FileParser(ABC):
         self._results[key] = val
 
     def __getattr__(self, key):
-        if self._results is None:
-            self._results = {}
-            self.parse(key)
-        return self._results.get(key)
+        if key.startswith('_'):
+            raise AttributeError(key)
+        return self.get(key)
 
     def __repr__(self) -> str:
         results = list(self._results.keys()) if self._results else []
@@ -267,6 +272,7 @@ class FileParser(ABC):
                 self._file_handler.close()
             except Exception:
                 pass
+            self._file_handler = None
 
 
 class ArchiveWriter(ABC):

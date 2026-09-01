@@ -2,14 +2,16 @@ import numpy as np
 import pint
 import pytest
 from nomad.datamodel.metainfo.system import Atoms
-from nomad.parsing.file_parser import (
+from nomad.units import ureg
+
+from nomad_file_parser import (
+    DataTextParser,
     FileParser,
     ParsePattern,
     Quantity,
     TextParser,
     XMLParser,
 )
-from nomad.units import ureg
 
 
 class TestFileParser:
@@ -54,6 +56,10 @@ class TestFileParser:
         ]
         text_parser.mainfile = mainfile
         assert text_parser.program == 'vasp'
+
+    def test_missing_private_attr_raises(self, text_parser):
+        with pytest.raises(AttributeError):
+            _ = text_parser._does_not_exist
 
     def test_get(self, text_parser):
         text_parser.quantities = [
@@ -191,10 +197,38 @@ class TestTextParser:
         assert parser2.quantities == parser.quantities
         assert parser2._results != parser._results
 
+    def test_findall_defaults_to_false(self, parser):
+        assert parser.findall is False
+
+    def test_to_data_parses_integer_arrays(self):
+        values = Quantity('values', r'([\d\s]+)').to_data('24 24 24')
+        assert np.issubdtype(values.dtype, np.integer)
+        assert (values == [24, 24, 24]).all()
+
+    def test_to_data_keeps_float_arrays(self):
+        values = Quantity('values', r'([\d\.\s]+)').to_data('1.5 2.5 3.5')
+        assert np.issubdtype(values.dtype, np.floating)
+        assert (values == [1.5, 2.5, 3.5]).all()
+
+    def test_to_data_does_not_accept_partial_numeric_tokens(self):
+        values = Quantity('values', r'(.+)').to_data('1 2 abc')
+        assert values == [1, 2, 'abc']
+
+    def test_to_data_does_not_parse_version_like_tokens(self):
+        assert Quantity('version', r'(.+)').to_data('1.2.3') == '1.2.3'
+        assert Quantity('version', r'(.+)', dtype=float).to_data('1.2.3') == '1.2.3'
+
+    def test_to_data_preserves_large_integer_precision(self):
+        raw = '100000000000000000000000003'
+        value = Quantity('n', r'(.+)').to_data(raw)
+        assert value == int(raw)
+        assert isinstance(value, int)
+
     def test_findall(self, parser, quantity_string, quantity_float, quantity_repeats):
         parser.quantities = [
             q['quantity'] for q in [quantity_string, quantity_float, quantity_repeats]
         ]
+        parser.findall = True
         assert parser.findall
         spin = parser.get(quantity_string['quantity'].name)
         volume = parser.get(quantity_float['quantity'].name)
@@ -487,6 +521,33 @@ class TestTextParser:
             94.47898900
         )
         assert parser.groundstate.final_scf.dos_fermi == pytest.approx(94.47898904)
+
+
+class TestDataTextParser:
+    def test_mainfile_contents(self):
+        expected = np.arange(6, dtype=np.float64)
+        parser = DataTextParser(
+            mainfile_contents=expected.tobytes(), dtype=np.float64
+        )
+        parser.parse(key='data')
+        assert parser._results is not None
+        data = parser.data
+        assert data is not None
+        assert np.array_equal(data, expected)
+        assert np.array_equal(parser.get('data'), expected)
+
+    def test_missing_private_attr_raises(self):
+        parser = DataTextParser(mainfile_contents=b'', dtype=np.float64)
+        with pytest.raises(AttributeError):
+            _ = parser._does_not_exist
+
+    def test_mainfile(self, tmp_path):
+        expected = np.array([[1.0, 2.0], [3.0, 4.0]])
+        data_file = tmp_path / 'data.txt'
+        np.savetxt(data_file, expected)
+        parser = DataTextParser(mainfile=str(data_file))
+        assert np.allclose(parser.data, expected)
+        assert np.allclose(parser.get('data'), expected)
 
 
 class TestXMLParser:
