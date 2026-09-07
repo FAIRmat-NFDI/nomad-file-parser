@@ -611,7 +611,14 @@ class TestMapper:
 
 
 class TestMappingParser:
-    def test_constructor_applies_attributes_without_overwriting_them(self):
+    @pytest.mark.parametrize(
+        'file_inputs',
+        [
+            {'filepath': 'mainfile', 'data_object': object()},
+            {'data_object': object(), 'filepath': 'mainfile'},
+        ],
+    )
+    def test_constructor_applies_attributes_without_overwriting_them(self, file_inputs):
         logger = object()
         mapper = Mapper()
         data = {'value': 1}
@@ -621,16 +628,17 @@ class TestMappingParser:
         parser = ExampleParser(
             open=open_file,
             data=data,
-            filepath='mainfile',
             mapper=mapper,
             required_paths=required_paths,
             logger=logger,
             parse_only_required=True,
+            **file_inputs,
         )
 
         assert parser._open is open_file
         assert parser._data is data
         assert parser.filepath == 'mainfile'
+        assert parser._data_object is file_inputs['data_object']
         assert parser.mapper is mapper
         assert parser._required_paths is required_paths
         assert parser.logger is logger

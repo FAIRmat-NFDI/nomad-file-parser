@@ -1940,46 +1940,47 @@ class MappingParser(ABC):
         if isinstance(data_object, FileParser):
             data_object.logger = self._logger
 
-    def __init__(self, **kwargs):
+    def __init__(  # noqa: PLR0913
+        self,
+        *,
+        mapper: BaseMapper | None = None,
+        filepath: str | None = None,
+        data: dict[str, Any] | None = None,
+        data_object: Any = None,
+        required_paths: list[str] | None = None,
+        open: Callable | None = None,
+        logger=None,
+        **kwargs,
+    ):
         """Initialize parser with optional filepath, data_object, or mapper.
 
         Args:
-            **kwargs: Initialization options:
-                - filepath (str): Path to file to parse
-                - data_object: Format-specific data object to populate (e.g., empty MSection
-                              instance for MetainfoParser, or existing h5py.Group for HDF5Parser)
-                - data (dict): Pre-loaded dictionary data (optional)
-                - mapper (BaseMapper): Mapping specification
-                - required_paths (list[str]): Paths to parse (if parse_only_required=True)
-                - open (Callable): Custom file open function
-                - logger (logging.Logger): Custom logger instance
+            mapper: Mapping specification.
+            filepath: Path to the file to parse.
+            data: Pre-loaded dictionary data.
+            data_object: Format-specific object to populate, such as an MSection or
+                h5py group.
+            required_paths: Paths to parse when ``parse_only_required`` is enabled.
+            open: Custom file-opening function.
+            logger: Logger used by the parser and its child file parser.
+            **kwargs: Parser-specific attributes.
         """
-        self._mapper: BaseMapper | None = None
-        self._filepath: str | None = None
-        self._data: dict[str, Any] = {}
-        self._data_object: Any = None
-        self._required_paths: list[str] = []
-        self._open: Callable | None = None
-        self._logger = LOGGER
+        self._mapper = mapper
+        self._filepath = filepath
+        self._data = {} if data is None else data
+        self._data_object = data_object
+        self._required_paths = [] if required_paths is None else required_paths
+        self._open = open
+        self._logger = LOGGER if logger is None else logger
 
-        # These constructor options expose read-only properties (or no public
-        # property), so apply them to their backing fields after writable
-        # properties such as ``filepath`` have run their reset logic.
-        backing_fields = {
-            'data': '_data',
-            'required_paths': '_required_paths',
-            'open': '_open',
-        }
         for key, val in kwargs.items():
-            if key in backing_fields:
-                continue
             if key in self.__dict__ or any(
                 key in cls.__dict__ for cls in type(self).__mro__
             ):
                 setattr(self, key, val)
-        for key, field in backing_fields.items():
-            if key in kwargs:
-                setattr(self, field, kwargs[key])
+
+        if isinstance(self._data_object, FileParser):
+            self._data_object.logger = self._logger
 
     @abstractmethod
     def load_file(self) -> Any:
