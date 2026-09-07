@@ -611,6 +611,31 @@ class TestMapper:
 
 
 class TestMappingParser:
+    def test_constructor_applies_attributes_without_overwriting_them(self):
+        logger = object()
+        mapper = Mapper()
+        data = {'value': 1}
+        required_paths = ['value']
+        open_file = Mock()
+
+        parser = ExampleParser(
+            open=open_file,
+            data=data,
+            filepath='mainfile',
+            mapper=mapper,
+            required_paths=required_paths,
+            logger=logger,
+            parse_only_required=True,
+        )
+
+        assert parser._open is open_file
+        assert parser._data is data
+        assert parser.filepath == 'mainfile'
+        assert parser.mapper is mapper
+        assert parser._required_paths is required_paths
+        assert parser.logger is logger
+        assert parser.parse_only_required is True
+
     def test_logger_propagates_to_loaded_file_parser(self, monkeypatch):
         logger = object()
         child_parser = TextFileParser()

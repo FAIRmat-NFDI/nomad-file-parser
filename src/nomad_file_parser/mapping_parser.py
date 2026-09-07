@@ -1952,17 +1952,34 @@ class MappingParser(ABC):
                 - mapper (BaseMapper): Mapping specification
                 - required_paths (list[str]): Paths to parse (if parse_only_required=True)
                 - open (Callable): Custom file open function
+                - logger (logging.Logger): Custom logger instance
         """
+        self._mapper: BaseMapper | None = None
+        self._filepath: str | None = None
+        self._data: dict[str, Any] = {}
+        self._data_object: Any = None
+        self._required_paths: list[str] = []
+        self._open: Callable | None = None
         self._logger = LOGGER
+
+        # These constructor options expose read-only properties (or no public
+        # property), so apply them to their backing fields after writable
+        # properties such as ``filepath`` have run their reset logic.
+        backing_fields = {
+            'data': '_data',
+            'required_paths': '_required_paths',
+            'open': '_open',
+        }
         for key, val in kwargs.items():
-            if hasattr(self, key):
+            if key in backing_fields:
+                continue
+            if key in self.__dict__ or any(
+                key in cls.__dict__ for cls in type(self).__mro__
+            ):
                 setattr(self, key, val)
-        self._mapper: BaseMapper = kwargs.get('mapper')
-        self._filepath: str = kwargs.get('filepath')
-        self._data: dict[str, Any] = kwargs.get('data', {})
-        self._data_object: Any = kwargs.get('data_object')
-        self._required_paths: list[str] = kwargs.get('required_paths', [])
-        self._open: Callable = kwargs.get('open')
+        for key, field in backing_fields.items():
+            if key in kwargs:
+                setattr(self, field, kwargs[key])
 
     @abstractmethod
     def load_file(self) -> Any:
