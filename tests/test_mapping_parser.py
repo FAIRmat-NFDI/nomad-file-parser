@@ -1,3 +1,4 @@
+import logging
 from copy import deepcopy
 from typing import Any
 from unittest.mock import Mock
@@ -10,6 +11,7 @@ from nomad.metainfo import Quantity, SubSection
 
 from nomad_file_parser.mapping_parser import (
     MAPPING_ANNOTATION_KEY,
+    BaseMapper,
     Data,
     HDF5Parser,
     Mapper,
@@ -17,6 +19,7 @@ from nomad_file_parser.mapping_parser import (
     MetainfoParser,
     Path,
     PathParser,
+    StructuredLoggerAdapter,
     TextParser,
     Transformer,
     XMLParser,
@@ -343,6 +346,43 @@ class TestPath:
 
 
 class TestMapper:
+    def test_from_dict_propagates_logger_to_nested_mappers(self):
+        logger = Mock()
+
+        BaseMapper.from_dict(
+            {'mapper': [{'mapper': {'invalid': 'mapper'}}]}, logger=logger
+        )
+
+        logger.error.assert_called_once_with('Unknown mapper type.')
+
+    def test_structured_logger_adapter_merges_bound_context(self):
+        logger = StructuredLoggerAdapter(
+            logging.getLogger(__name__), {'parser_name': 'example'}
+        )
+
+        _, kwargs = logger.process(
+            'message', {'extra': {'entry_id': 'entry'}, 'line_number': 42}
+        )
+
+        assert kwargs['extra'] == {
+            'parser_name': 'example',
+            'entry_id': 'entry',
+            'line_number': 42,
+        }
+
+    def test_mapping_parser_wraps_stdlib_logger_adapter(self):
+        logger = logging.LoggerAdapter(
+            logging.getLogger(__name__), {'parser_name': 'example'}
+        )
+        parser = ExampleParser(logger=logger)
+
+        assert isinstance(parser.logger, StructuredLoggerAdapter)
+        _, kwargs = parser.logger.process('message', {'function_name': 'transform'})
+        assert kwargs['extra'] == {
+            'parser_name': 'example',
+            'function_name': 'transform',
+        }
+
     def test_transformer_logs_evaluation_error(self):
         logger = Mock()
         transformer = Transformer(function_name='missing_function')

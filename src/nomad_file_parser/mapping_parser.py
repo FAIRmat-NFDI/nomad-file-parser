@@ -274,11 +274,12 @@ class StructuredLoggerAdapter(logging.LoggerAdapter):
     _stdlib_kwargs = {'exc_info', 'extra', 'stack_info', 'stacklevel'}
 
     def process(self, msg: str, kwargs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-        extra = kwargs.setdefault('extra', {})
-        if isinstance(extra, dict):
-            for key in list(kwargs):
-                if key not in self._stdlib_kwargs:
-                    extra[key] = kwargs.pop(key)
+        extra = dict(self.extra)
+        extra.update(kwargs.get('extra') or {})
+        kwargs['extra'] = extra
+        for key in list(kwargs):
+            if key not in self._stdlib_kwargs:
+                extra[key] = kwargs.pop(key)
         return msg, kwargs
 
 
@@ -288,6 +289,8 @@ LOGGER = StructuredLoggerAdapter(logging.getLogger(__name__), {})
 def _structured_logger(logger: StructuredLogger | None) -> StructuredLogger:
     if logger is None:
         return LOGGER
+    if isinstance(logger, logging.LoggerAdapter):
+        return StructuredLoggerAdapter(logger.logger, logger.extra)
     if isinstance(logger, logging.Logger):
         return StructuredLoggerAdapter(logger, {})
     return logger
@@ -1378,7 +1381,7 @@ class BaseMapper(BaseModel):
             mapper = []
             obj = Mapper()
             for n, v in enumerate(dct.get('mappers', [])):
-                obj[n] = BaseMapper.from_dict(v, parent)
+                obj[n] = BaseMapper.from_dict(v, parent, logger)
 
         elif isinstance(mapper, tuple) and None in mapper:
             return obj
@@ -1431,7 +1434,7 @@ class BaseMapper(BaseModel):
         if isinstance(obj, Mapper):
             mappers = []
             for v in mapper:
-                m = BaseMapper.from_dict(v, obj)
+                m = BaseMapper.from_dict(v, obj, logger)
                 mappers.append(m)
             obj.mappers = mappers
 
