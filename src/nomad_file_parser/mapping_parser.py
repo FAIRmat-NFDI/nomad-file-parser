@@ -261,9 +261,10 @@ class StructuredLoggerAdapter(logging.LoggerAdapter):
 
     def process(self, msg: str, kwargs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         extra = kwargs.setdefault('extra', {})
-        for key in list(kwargs):
-            if key not in self._stdlib_kwargs:
-                extra[key] = kwargs.pop(key)
+        if isinstance(extra, dict):
+            for key in list(kwargs):
+                if key not in self._stdlib_kwargs:
+                    extra[key] = kwargs.pop(key)
         return msg, kwargs
 
 
@@ -1582,8 +1583,6 @@ class Transformer(BaseMapper):
                 else func(*args, **self.function_kwargs)
             )
         except Exception as e:
-            if kwargs.get('debug'):
-                raise RuntimeError(f'Error evaluating {self.function_name}.') from e
             logger = kwargs.get('logger') or LOGGER
             if isinstance(logger, logging.Logger):
                 logger = StructuredLoggerAdapter(logger, {})
@@ -1591,6 +1590,10 @@ class Transformer(BaseMapper):
                 'Error evaluating mapping function.',
                 function_name=self.function_name,
             )
+            if kwargs.get('debug'):
+                raise RuntimeError(
+                    f'Error evaluating {self.function_name}.: {e}'
+                ) from e
             return None
 
 
