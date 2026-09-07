@@ -1,5 +1,6 @@
 from copy import deepcopy
 from typing import Any
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -342,6 +343,16 @@ class TestPath:
 
 
 class TestMapper:
+    def test_transformer_logs_evaluation_error(self):
+        logger = Mock()
+        transformer = Transformer(function_name='missing_function')
+
+        assert transformer.get_data({}, ExampleParser(data={}), logger=logger) is None
+        logger.exception.assert_called_once_with(
+            'Error evaluating mapping function.',
+            function_name='missing_function',
+        )
+
     @pytest.mark.parametrize(
         'dct, expected',
         [
@@ -600,6 +611,20 @@ class TestMapper:
 
 
 class TestMappingParser:
+    def test_logger_propagates_to_loaded_file_parser(self, monkeypatch):
+        logger = object()
+        child_parser = TextFileParser()
+        parser = ExampleParser(logger=logger)
+        monkeypatch.setattr(parser, 'load_file', lambda: child_parser)
+
+        assert parser.logger is logger
+        assert parser.data_object is child_parser
+        assert child_parser.logger is logger
+
+        replacement_logger = object()
+        parser.logger = replacement_logger
+        assert child_parser.logger is replacement_logger
+
     def test_set_data_nested_update_mode_per_key(self, monkeypatch):
         parser = ExampleParser(data={})
         update_modes: list[tuple[str, str | None]] = []
