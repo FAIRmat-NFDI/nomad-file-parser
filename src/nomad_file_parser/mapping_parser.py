@@ -1930,7 +1930,12 @@ class MappingParser(ABC):
         parse_only_required (bool): Only parse paths needed by mapper (optimization).
         attribute_prefix (str): Prefix for attribute keys (default '@').
         value_key (str): Key for element value when attributes present (default '__value').
-        logger: Logger instance for this module.
+
+    Instance attributes:
+        logger (StructuredLogger): Logger used by this parser and its mapper operations.
+            It can be supplied at construction or reassigned later. When the parser's
+            data object is a :class:`FileParser`, assigning the logger propagates it
+            to that child parser.
 
     Dependencies:
         Uses: :class:`BaseMapper` (typically :class:`Mapper`) for transformation specification
@@ -1950,7 +1955,11 @@ class MappingParser(ABC):
 
     @property
     def logger(self) -> StructuredLogger:
-        """Logger used by this parser and its mapper operations."""
+        """Logger used by this parser and its mapper operations.
+
+        Setting this property also propagates the logger to a child
+        :class:`FileParser` held as the parser's data object.
+        """
         return self._logger
 
     @logger.setter
