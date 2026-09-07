@@ -8,7 +8,7 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from io import BytesIO
-from typing import Any, Optional, cast
+from typing import Any, Optional, Protocol, cast
 
 import h5py
 import jmespath
@@ -254,6 +254,20 @@ class JmespathOptions(jmespath.visitor.Options):
         super().__init__(**kwargs)
 
 
+class StructuredLogger(Protocol):
+    """Logging interface shared by structlog and the stdlib adapter."""
+
+    def debug(self, event: object, /, *args: Any, **kwargs: Any) -> Any: ...
+
+    def info(self, event: object, /, *args: Any, **kwargs: Any) -> Any: ...
+
+    def warning(self, event: object, /, *args: Any, **kwargs: Any) -> Any: ...
+
+    def error(self, event: object, /, *args: Any, **kwargs: Any) -> Any: ...
+
+    def exception(self, event: object, /, *args: Any, **kwargs: Any) -> Any: ...
+
+
 class StructuredLoggerAdapter(logging.LoggerAdapter):
     """Allow structlog-style keyword fields with a stdlib logger."""
 
@@ -269,6 +283,14 @@ class StructuredLoggerAdapter(logging.LoggerAdapter):
 
 
 LOGGER = StructuredLoggerAdapter(logging.getLogger(__name__), {})
+
+
+def _structured_logger(logger: StructuredLogger | None) -> StructuredLogger:
+    if logger is None:
+        return LOGGER
+    if isinstance(logger, logging.Logger):
+        return StructuredLoggerAdapter(logger, {})
+    return logger
 
 
 def _normalize_update_mode_spec(update_mode: Any) -> dict[str, Any]:
@@ -1265,7 +1287,7 @@ class BaseMapper(BaseModel):
     def from_dict(
         dct: dict[str, Any],
         parent: 'BaseMapper | None' = None,
-        logger: logging.Logger = LOGGER,
+        logger: StructuredLogger = LOGGER,
     ) -> 'BaseMapper':
         """Factory method to construct mapper objects from dictionary specifications.
 
@@ -1583,17 +1605,12 @@ class Transformer(BaseMapper):
                 else func(*args, **self.function_kwargs)
             )
         except Exception as e:
-            logger = kwargs.get('logger') or LOGGER
-            if isinstance(logger, logging.Logger):
-                logger = StructuredLoggerAdapter(logger, {})
-            logger.exception(
+            parser.logger.exception(
                 'Error evaluating mapping function.',
                 function_name=self.function_name,
             )
             if kwargs.get('debug'):
-                raise RuntimeError(
-                    f'Error evaluating {self.function_name}: {e}'
-                ) from e
+                raise RuntimeError(f'Error evaluating {self.function_name}: {e}') from e
             return None
 
 
@@ -1932,13 +1949,13 @@ class MappingParser(ABC):
     value_key: str = '__value'
 
     @property
-    def logger(self):
+    def logger(self) -> StructuredLogger:
         """Logger used by this parser and its mapper operations."""
         return self._logger
 
     @logger.setter
-    def logger(self, value):
-        self._logger = value if value is not None else LOGGER
+    def logger(self, value: StructuredLogger | None) -> None:
+        self._logger = _structured_logger(value)
         data_object = getattr(self, '_data_object', None)
         if isinstance(data_object, FileParser):
             data_object.logger = self._logger
@@ -1952,7 +1969,7 @@ class MappingParser(ABC):
         data_object: Any = None,
         required_paths: list[str] | None = None,
         open: Callable | None = None,
-        logger=None,
+        logger: StructuredLogger | None = None,
         **kwargs,
     ):
         """Initialize parser with optional filepath, data_object, or mapper.
@@ -1974,7 +1991,7 @@ class MappingParser(ABC):
         self._data_object = data_object
         self._required_paths = [] if required_paths is None else required_paths
         self._open = open
-        self._logger = LOGGER if logger is None else logger
+        self._logger: StructuredLogger = _structured_logger(logger)
 
         for key, val in kwargs.items():
             if key in self.__dict__ or any(
@@ -2264,9 +2281,7 @@ class MappingParser(ABC):
         source_data = self.data
         if mapper.source:
             source_data = mapper.source.get_data(self.data, self)
-        result = mapper.get_data(
-            source_data, self, remove=remove, debug=debug, logger=self.logger
-        )
+        result = mapper.get_data(source_data, self, remove=remove, debug=debug)
         target.set_data(result, target.data, update_mode=update_mode, mapper=mapper)
         target.from_dict(target.data)
 

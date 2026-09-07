@@ -346,8 +346,9 @@ class TestMapper:
     def test_transformer_logs_evaluation_error(self):
         logger = Mock()
         transformer = Transformer(function_name='missing_function')
+        parser = ExampleParser(data={}, logger=logger)
 
-        assert transformer.get_data({}, ExampleParser(data={}), logger=logger) is None
+        assert transformer.get_data({}, parser) is None
         logger.exception.assert_called_once_with(
             'Error evaluating mapping function.',
             function_name='missing_function',
