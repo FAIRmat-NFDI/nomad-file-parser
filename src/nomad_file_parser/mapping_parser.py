@@ -1,7 +1,6 @@
 import bz2
 import gzip
 import json
-import logging
 import lzma
 import os
 import re
@@ -19,6 +18,8 @@ from jsonpath_ng.parser import JsonPathParser
 from lxml import etree
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
+from .file_parser import FileParser
+from .logging import LOGGER, StructuredLogger, normalize_logger
 from .text_parser import TextParser as TextFileParser
 
 """
@@ -251,9 +252,6 @@ class JmespathOptions(jmespath.visitor.Options):
                 setattr(self, key, kwargs[key])
                 del kwargs[key]
         super().__init__(**kwargs)
-
-
-LOGGER = logging.getLogger(__name__)
 
 
 def _normalize_update_mode_spec(update_mode: Any) -> dict[str, Any]:
@@ -1250,7 +1248,7 @@ class BaseMapper(BaseModel):
     def from_dict(
         dct: dict[str, Any],
         parent: 'BaseMapper | None' = None,
-        logger: logging.Logger = LOGGER,
+        logger: StructuredLogger = LOGGER,
     ) -> 'BaseMapper':
         """Factory method to construct mapper objects from dictionary specifications.
 
@@ -1303,6 +1301,7 @@ class BaseMapper(BaseModel):
             ... })
             # Returns Mapper with two Transformer sub-mappers
         """
+        logger = normalize_logger(logger)
         paths: dict[str, Data] = {}
         path_parser = dct.get('path_parser')
 
@@ -1341,7 +1340,7 @@ class BaseMapper(BaseModel):
             mapper = []
             obj = Mapper()
             for n, v in enumerate(dct.get('mappers', [])):
-                obj[n] = BaseMapper.from_dict(v, parent)
+                obj[n] = BaseMapper.from_dict(v, parent, logger)
 
         elif isinstance(mapper, tuple) and None in mapper:
             return obj
@@ -1394,7 +1393,7 @@ class BaseMapper(BaseModel):
         if isinstance(obj, Mapper):
             mappers = []
             for v in mapper:
-                m = BaseMapper.from_dict(v, obj)
+                m = BaseMapper.from_dict(v, obj, logger)
                 mappers.append(m)
             obj.mappers = mappers
 
@@ -1568,8 +1567,12 @@ class Transformer(BaseMapper):
                 else func(*args, **self.function_kwargs)
             )
         except Exception as e:
+            parser.logger.exception(
+                'Error evaluating mapping function.',
+                function_name=self.function_name,
+            )
             if kwargs.get('debug'):
-                raise RuntimeError(f'Error evaluating {self.function_name}: {e}')
+                raise RuntimeError(f'Error evaluating {self.function_name}: {e}') from e
             return None
 
 
@@ -1889,7 +1892,12 @@ class MappingParser(ABC):
         parse_only_required (bool): Only parse paths needed by mapper (optimization).
         attribute_prefix (str): Prefix for attribute keys (default '@').
         value_key (str): Key for element value when attributes present (default '__value').
-        logger: Logger instance for this module.
+
+    Instance attributes:
+        logger (StructuredLogger): Logger used by this parser and its mapper operations.
+            It can be supplied at construction or reassigned later. When the parser's
+            data object is a :class:`FileParser`, assigning the logger propagates it
+            to that child parser.
 
     Dependencies:
         Uses: :class:`BaseMapper` (typically :class:`Mapper`) for transformation specification
@@ -1906,30 +1914,64 @@ class MappingParser(ABC):
     parse_only_required: bool = False
     attribute_prefix: str = '@'
     value_key: str = '__value'
-    logger = LOGGER
 
-    def __init__(self, **kwargs):
+    @property
+    def logger(self) -> StructuredLogger:
+        """Logger used by this parser and its mapper operations.
+
+        Setting this property also propagates the logger to a child
+        :class:`FileParser` held as the parser's data object.
+        """
+        return self._logger
+
+    @logger.setter
+    def logger(self, value: StructuredLogger | None) -> None:
+        self._logger = normalize_logger(value)
+        data_object = getattr(self, '_data_object', None)
+        if isinstance(data_object, FileParser):
+            data_object.logger = self._logger
+
+    def __init__(  # noqa: PLR0913
+        self,
+        *,
+        mapper: BaseMapper | None = None,
+        filepath: str | None = None,
+        data: dict[str, Any] | None = None,
+        data_object: Any = None,
+        required_paths: list[str] | None = None,
+        open: Callable | None = None,
+        logger: StructuredLogger | None = None,
+        **kwargs,
+    ):
         """Initialize parser with optional filepath, data_object, or mapper.
 
         Args:
-            **kwargs: Initialization options:
-                - filepath (str): Path to file to parse
-                - data_object: Format-specific data object to populate (e.g., empty MSection
-                              instance for MetainfoParser, or existing h5py.Group for HDF5Parser)
-                - data (dict): Pre-loaded dictionary data (optional)
-                - mapper (BaseMapper): Mapping specification
-                - required_paths (list[str]): Paths to parse (if parse_only_required=True)
-                - open (Callable): Custom file open function
+            mapper: Mapping specification.
+            filepath: Path to the file to parse.
+            data: Pre-loaded dictionary data.
+            data_object: Format-specific object to populate, such as an MSection or
+                h5py group.
+            required_paths: Paths to parse when ``parse_only_required`` is enabled.
+            open: Custom file-opening function.
+            logger: Logger used by the parser and its child file parser.
+            **kwargs: Parser-specific attributes.
         """
+        self._mapper = mapper
+        self._filepath = filepath
+        self._data = {} if data is None else data
+        self._data_object = data_object
+        self._required_paths = [] if required_paths is None else required_paths
+        self._open = open
+        self._logger: StructuredLogger = normalize_logger(logger)
+
         for key, val in kwargs.items():
-            if hasattr(self, key):
+            if key in self.__dict__ or any(
+                key in cls.__dict__ for cls in type(self).__mro__
+            ):
                 setattr(self, key, val)
-        self._mapper: BaseMapper = kwargs.get('mapper')
-        self._filepath: str = kwargs.get('filepath')
-        self._data: dict[str, Any] = kwargs.get('data', {})
-        self._data_object: Any = kwargs.get('data_object')
-        self._required_paths: list[str] = kwargs.get('required_paths', [])
-        self._open: Callable = kwargs.get('open')
+
+        if isinstance(self._data_object, FileParser):
+            self._data_object.logger = self._logger
 
     @abstractmethod
     def load_file(self) -> Any:
@@ -2010,11 +2052,15 @@ class MappingParser(ABC):
     def data_object(self):
         if self._data_object is None:
             self._data_object = self.load_file()
+            if isinstance(self._data_object, FileParser):
+                self._data_object.logger = self.logger
         return self._data_object
 
     @data_object.setter
     def data_object(self, value: Any):
         self._data_object = value
+        if isinstance(value, FileParser):
+            value.logger = self.logger
         self._data = None
         self._filepath = None
 
@@ -2364,7 +2410,7 @@ class MetainfoParser(MappingParser):
             with open(self.filepath) as f:
                 return self._data_object.m_from_dict(json.load(f))
         elif self.filepath:
-            self.logger.errror('Error loading archive file.')
+            self.logger.error('Error loading archive file.')
         return None
 
     def to_dict(self, **kwargs) -> dict[str | int, Any]:

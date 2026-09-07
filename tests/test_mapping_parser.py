@@ -1,5 +1,7 @@
+import logging
 from copy import deepcopy
 from typing import Any
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -7,8 +9,10 @@ from nomad.datamodel import ArchiveSection
 from nomad.datamodel.metainfo.annotations import Mapper as MapperAnnotation
 from nomad.metainfo import Quantity, SubSection
 
+from nomad_file_parser.logging import StructuredLoggerAdapter
 from nomad_file_parser.mapping_parser import (
     MAPPING_ANNOTATION_KEY,
+    BaseMapper,
     Data,
     HDF5Parser,
     Mapper,
@@ -342,6 +346,54 @@ class TestPath:
 
 
 class TestMapper:
+    def test_from_dict_propagates_logger_to_nested_mappers(self):
+        logger = Mock()
+
+        BaseMapper.from_dict(
+            {'mapper': [{'mapper': {'invalid': 'mapper'}}]}, logger=logger
+        )
+
+        logger.error.assert_called_once_with('Unknown mapper type.')
+
+    def test_structured_logger_adapter_merges_bound_context(self):
+        logger = StructuredLoggerAdapter(
+            logging.getLogger(__name__), {'parser_name': 'example'}
+        )
+
+        _, kwargs = logger.process(
+            'message', {'extra': {'entry_id': 'entry'}, 'line_number': 42}
+        )
+
+        assert kwargs['extra'] == {
+            'parser_name': 'example',
+            'entry_id': 'entry',
+            'line_number': 42,
+        }
+
+    def test_mapping_parser_wraps_stdlib_logger_adapter(self):
+        logger = logging.LoggerAdapter(
+            logging.getLogger(__name__), {'parser_name': 'example'}
+        )
+        parser = ExampleParser(logger=logger)
+
+        assert isinstance(parser.logger, StructuredLoggerAdapter)
+        _, kwargs = parser.logger.process('message', {'function_name': 'transform'})
+        assert kwargs['extra'] == {
+            'parser_name': 'example',
+            'function_name': 'transform',
+        }
+
+    def test_transformer_logs_evaluation_error(self):
+        logger = Mock()
+        transformer = Transformer(function_name='missing_function')
+        parser = ExampleParser(data={}, logger=logger)
+
+        assert transformer.get_data({}, parser) is None
+        logger.exception.assert_called_once_with(
+            'Error evaluating mapping function.',
+            function_name='missing_function',
+        )
+
     @pytest.mark.parametrize(
         'dct, expected',
         [
@@ -600,6 +652,53 @@ class TestMapper:
 
 
 class TestMappingParser:
+    @pytest.mark.parametrize(
+        'file_inputs',
+        [
+            {'filepath': 'mainfile', 'data_object': object()},
+            {'data_object': object(), 'filepath': 'mainfile'},
+        ],
+    )
+    def test_constructor_applies_attributes_without_overwriting_them(self, file_inputs):
+        logger = object()
+        mapper = Mapper()
+        data = {'value': 1}
+        required_paths = ['value']
+        open_file = Mock()
+
+        parser = ExampleParser(
+            open=open_file,
+            data=data,
+            mapper=mapper,
+            required_paths=required_paths,
+            logger=logger,
+            parse_only_required=True,
+            **file_inputs,
+        )
+
+        assert parser._open is open_file
+        assert parser._data is data
+        assert parser.filepath == 'mainfile'
+        assert parser._data_object is file_inputs['data_object']
+        assert parser.mapper is mapper
+        assert parser._required_paths is required_paths
+        assert parser.logger is logger
+        assert parser.parse_only_required is True
+
+    def test_logger_propagates_to_loaded_file_parser(self, monkeypatch):
+        logger = object()
+        child_parser = TextFileParser()
+        parser = ExampleParser(logger=logger)
+        monkeypatch.setattr(parser, 'load_file', lambda: child_parser)
+
+        assert parser.logger is logger
+        assert parser.data_object is child_parser
+        assert child_parser.logger is logger
+
+        replacement_logger = object()
+        parser.logger = replacement_logger
+        assert child_parser.logger is replacement_logger
+
     def test_set_data_nested_update_mode_per_key(self, monkeypatch):
         parser = ExampleParser(data={})
         update_modes: list[tuple[str, str | None]] = []
