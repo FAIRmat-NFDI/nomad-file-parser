@@ -1592,7 +1592,7 @@ class Transformer(BaseMapper):
             )
             if kwargs.get('debug'):
                 raise RuntimeError(
-                    f'Error evaluating {self.function_name}.: {e}'
+                    f'Error evaluating {self.function_name}: {e}'
                 ) from e
             return None
 
