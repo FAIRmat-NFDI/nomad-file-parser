@@ -1583,8 +1583,10 @@ class Transformer(BaseMapper):
             )
         except Exception as e:
             if kwargs.get('debug'):
-                raise RuntimeError(f'Error evaluating {self.function_name}: {e}')
+                raise RuntimeError(f'Error evaluating {self.function_name}.') from e
             logger = kwargs.get('logger') or LOGGER
+            if isinstance(logger, logging.Logger):
+                logger = StructuredLoggerAdapter(logger, {})
             logger.exception(
                 'Error evaluating mapping function.',
                 function_name=self.function_name,
