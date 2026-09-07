@@ -1,4 +1,5 @@
 from .file_parser import ArchiveWriter, FileParser
+from .logging import LOGGER, StructuredLogger, StructuredLoggerAdapter, normalize_logger
 from .mapping_parser import MappingParser
 from .tar_parser import TarParser
 from .text_parser import DataTextParser, ParsePattern, Quantity, TextParser

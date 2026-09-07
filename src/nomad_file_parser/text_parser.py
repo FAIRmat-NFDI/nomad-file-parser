@@ -27,10 +27,9 @@ from typing import Any
 
 import numpy as np
 import pint
-from nomad.metainfo import Quantity as mQuantity
-from nomad.utils import get_logger
 
 from .file_parser import FileParser
+from .logging import StructuredLogger
 
 
 def _compile_bytes_pattern(pattern: Any) -> re.Pattern:
@@ -139,7 +138,7 @@ class Quantity:
 
     def __init__(
         self,
-        quantity: str | mQuantity,
+        quantity: Any,
         re_pattern: str | list | ParsePattern,
         **kwargs,
     ):
@@ -152,7 +151,7 @@ class Quantity:
             self.dtype = None
             self.unit = None
             self.shape = None
-        elif isinstance(quantity, mQuantity):
+        else:
             self.name = quantity.name
             self.dtype = (
                 quantity.type.type
@@ -335,11 +334,9 @@ class TextParser(FileParser):
         self,
         mainfile: str | None = None,
         quantities: list[Quantity] | None = None,
-        logger=None,
+        logger: StructuredLogger | None = None,
         **kwargs,
     ):
-        if logger is None:
-            logger = get_logger(__name__)
         super().__init__(mainfile, logger=logger, open=kwargs.get('open', None))
         self._quantities: list[Quantity] = quantities
         self.findall: bool = kwargs.get('findall', False)

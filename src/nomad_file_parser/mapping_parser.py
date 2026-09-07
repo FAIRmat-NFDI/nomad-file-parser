@@ -1,14 +1,13 @@
 import bz2
 import gzip
 import json
-import logging
 import lzma
 import os
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from io import BytesIO
-from typing import Any, Optional, Protocol, cast
+from typing import Any, Optional, cast
 
 import h5py
 import jmespath
@@ -20,6 +19,7 @@ from lxml import etree
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from .file_parser import FileParser
+from .logging import LOGGER, StructuredLogger, normalize_logger
 from .text_parser import TextParser as TextFileParser
 
 """
@@ -252,48 +252,6 @@ class JmespathOptions(jmespath.visitor.Options):
                 setattr(self, key, kwargs[key])
                 del kwargs[key]
         super().__init__(**kwargs)
-
-
-class StructuredLogger(Protocol):
-    """Logging interface shared by structlog and the stdlib adapter."""
-
-    def debug(self, event: object, /, *args: Any, **kwargs: Any) -> Any: ...
-
-    def info(self, event: object, /, *args: Any, **kwargs: Any) -> Any: ...
-
-    def warning(self, event: object, /, *args: Any, **kwargs: Any) -> Any: ...
-
-    def error(self, event: object, /, *args: Any, **kwargs: Any) -> Any: ...
-
-    def exception(self, event: object, /, *args: Any, **kwargs: Any) -> Any: ...
-
-
-class StructuredLoggerAdapter(logging.LoggerAdapter):
-    """Allow structlog-style keyword fields with a stdlib logger."""
-
-    _stdlib_kwargs = {'exc_info', 'extra', 'stack_info', 'stacklevel'}
-
-    def process(self, msg: str, kwargs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-        extra = dict(self.extra)
-        extra.update(kwargs.get('extra') or {})
-        kwargs['extra'] = extra
-        for key in list(kwargs):
-            if key not in self._stdlib_kwargs:
-                extra[key] = kwargs.pop(key)
-        return msg, kwargs
-
-
-LOGGER = StructuredLoggerAdapter(logging.getLogger(__name__), {})
-
-
-def _structured_logger(logger: StructuredLogger | None) -> StructuredLogger:
-    if logger is None:
-        return LOGGER
-    if isinstance(logger, logging.LoggerAdapter):
-        return StructuredLoggerAdapter(logger.logger, logger.extra)
-    if isinstance(logger, logging.Logger):
-        return StructuredLoggerAdapter(logger, {})
-    return logger
 
 
 def _normalize_update_mode_spec(update_mode: Any) -> dict[str, Any]:
@@ -1343,6 +1301,7 @@ class BaseMapper(BaseModel):
             ... })
             # Returns Mapper with two Transformer sub-mappers
         """
+        logger = normalize_logger(logger)
         paths: dict[str, Data] = {}
         path_parser = dct.get('path_parser')
 
@@ -1967,7 +1926,7 @@ class MappingParser(ABC):
 
     @logger.setter
     def logger(self, value: StructuredLogger | None) -> None:
-        self._logger = _structured_logger(value)
+        self._logger = normalize_logger(value)
         data_object = getattr(self, '_data_object', None)
         if isinstance(data_object, FileParser):
             data_object.logger = self._logger
@@ -2003,7 +1962,7 @@ class MappingParser(ABC):
         self._data_object = data_object
         self._required_paths = [] if required_paths is None else required_paths
         self._open = open
-        self._logger: StructuredLogger = _structured_logger(logger)
+        self._logger: StructuredLogger = normalize_logger(logger)
 
         for key, val in kwargs.items():
             if key in self.__dict__ or any(

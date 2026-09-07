@@ -9,6 +9,7 @@ from nomad.datamodel import ArchiveSection
 from nomad.datamodel.metainfo.annotations import Mapper as MapperAnnotation
 from nomad.metainfo import Quantity, SubSection
 
+from nomad_file_parser.logging import StructuredLoggerAdapter
 from nomad_file_parser.mapping_parser import (
     MAPPING_ANNOTATION_KEY,
     BaseMapper,
@@ -19,7 +20,6 @@ from nomad_file_parser.mapping_parser import (
     MetainfoParser,
     Path,
     PathParser,
-    StructuredLoggerAdapter,
     TextParser,
     Transformer,
     XMLParser,

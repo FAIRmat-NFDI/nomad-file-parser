@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 import pint
 import pytest
@@ -12,9 +14,23 @@ from nomad_file_parser import (
     TextParser,
     XMLParser,
 )
+from nomad_file_parser.logging import StructuredLoggerAdapter
 
 
 class TestFileParser:
+    def test_logger_adapter_is_normalized(self):
+        logger = logging.LoggerAdapter(
+            logging.getLogger(__name__), {'parser_name': 'example'}
+        )
+        parser = TextParser(logger=logger)
+
+        assert isinstance(parser.logger, StructuredLoggerAdapter)
+        _, kwargs = parser.logger.process('message', {'function_name': 'parse'})
+        assert kwargs['extra'] == {
+            'parser_name': 'example',
+            'function_name': 'parse',
+        }
+
     @pytest.fixture(scope='class')
     def calculation_parser(self):
         class Parser(FileParser):

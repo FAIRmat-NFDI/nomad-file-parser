@@ -15,10 +15,13 @@
 import tarfile
 
 from .file_parser import FileParser
+from .logging import StructuredLogger
 
 
 class TarParser(FileParser):
-    def __init__(self, mainfile=None, logger=None):
+    def __init__(
+        self, mainfile: str | None = None, logger: StructuredLogger | None = None
+    ):
         super().__init__(mainfile, logger, tarfile.open)
         self._names_map = None
 

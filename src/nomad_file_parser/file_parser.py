@@ -14,7 +14,6 @@
 
 import bz2
 import gzip
-import logging
 import lzma
 import os
 import tarfile
@@ -24,6 +23,8 @@ from contextlib import contextmanager
 from typing import IO, Any
 
 import pint
+
+from .logging import LOGGER, StructuredLogger, normalize_logger
 
 
 class FileParser(ABC):
@@ -41,7 +42,7 @@ class FileParser(ABC):
     def __init__(
         self,
         mainfile: str | IO | None = None,
-        logger=None,
+        logger: StructuredLogger | None = None,
         open: Callable | None = None,
     ):
         self._mainfile: str = None
@@ -53,12 +54,21 @@ class FileParser(ABC):
             self._mainfile = mainfile.name
             self._mainfile_obj = mainfile
         self._open: Callable = open
-        self.logger = logger if logger is not None else logging.getLogger(__name__)
+        self.logger = normalize_logger(logger)
         # a key is necessary for xml parsers, where parsing is done dynamically
         self._key: str = None
         self._kwargs: dict[str, Any] = {}
         self._results: dict[str, Any] = None
         self._file_handler: Any = None
+
+    @property
+    def logger(self) -> StructuredLogger:
+        """Logger used by this file parser."""
+        return self._logger
+
+    @logger.setter
+    def logger(self, value: StructuredLogger | None) -> None:
+        self._logger = normalize_logger(value)
 
     def reset(self):
         """
@@ -278,8 +288,16 @@ class FileParser(ABC):
 class ArchiveWriter(ABC):
     mainfile: str | None = None
     archive: Any | None = None
-    logger = None
     child_archives: dict[str, Any] | None = None
+
+    @property
+    def logger(self) -> StructuredLogger:
+        """Logger used while writing the archive."""
+        return getattr(self, '_logger', LOGGER)
+
+    @logger.setter
+    def logger(self, value: StructuredLogger | None) -> None:
+        self._logger = normalize_logger(value)
 
     def get_mainfile_keys(self, filename: str, decoded_buffer: str) -> bool | list[str]:
         """
@@ -325,20 +343,28 @@ class ArchiveWriter(ABC):
         self.archive.m_update_from_dict(self.to_dict())
 
     def write(
-        self, mainfile: str, archive: Any, logger=None, child_archives=None
+        self,
+        mainfile: str,
+        archive: Any,
+        logger: StructuredLogger | None = None,
+        child_archives=None,
     ) -> None:
         """
         Wrapper to write_to_archive method.
         """
         self.mainfile = mainfile
         self.archive = archive
-        self.logger = logger if logger else logging.getLogger(__name__)
+        self.logger = logger
         self.child_archives = child_archives
 
         self.write_to_archive()
 
     def parse(
-        self, mainfile: str, archive: Any, logger=None, child_archives=None
+        self,
+        mainfile: str,
+        archive: Any,
+        logger: StructuredLogger | None = None,
+        child_archives=None,
     ) -> None:
         """
         Wraps write method for backwards compatibility.
