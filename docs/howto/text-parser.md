@@ -1,15 +1,6 @@
-## Parsing text files
+# Parse text files
 
-ASCII text files are amongst the most common files used. Here, we show you how to parse the text by matching specific [regular expressions](https://realpython.com/regex-python/){:target="_blank" rel="noopener"} in these files. For the following example, we will use the project file `tests/data/example.out`:
-
-<!-- TODO can I get rid of this? -->
-Check out the `master` branch of the `exampleparser` project,
-
-```shell
-git checkout master
-```
-
-and examine the file to be parsed in `tests/data/example.out`:
+ASCII text files are amongst the most common files used. Here, we show you how to parse the text by matching specific [regular expressions](https://realpython.com/regex-python/){:target="_blank" rel="noopener"} in these files. For the following example, consider a file with the following contents:
 
 ```text
 2020/05/15
@@ -37,8 +28,14 @@ and its version (`v2`). Then is information for two systems (`system 1` and `sys
 separated with a string containing a code-specific value `magic source`. Both system sections contain the quantities `sites` and `energy`, but each have a unique quantity as well, `latice` and `cell`, respectively.
 
 In order to convert the information from this file into the NOMAD archive, we first have to
-parse the necessary quantities. The `nomad-lab` Python package provides a `text_parser`
-module for declarative (i.e., semi-automated) parsing of text files. You can define text file parsers as follows:
+parse the necessary quantities. The `nomad-file-parser` package provides a `TextParser`
+for declarative (i.e., semi-automated) parsing of text files:
+
+```python
+from nomad_file_parser import TextParser, Quantity
+```
+
+You can define text file parsers as follows:
 
 ```python
 def str_to_sites(string):
@@ -112,7 +109,6 @@ to define the data type, shape, and unit for the quantity. `TextParser` returns 
 of key-value pairs, where the key is defined by the name of the quantities and the value is
 based on the matched re pattern.
 
-To parse a file, simply do:
 To parse a file, specify the path to such file and call the `parse()` function of `TextParser`:
 
 ```python
@@ -141,3 +137,8 @@ Aside from `TextParser`, other `FileParser` classes are also defined. These incl
 the parser takes in an XPath-style key to access individual quantities. By default,
 automatic data type conversion is performed, which can be switched off by setting
 `convert=False`.
+
+- `TarParser`: reads a TAR archive, exposing its members for downstream parsing.
+
+For tree-structured formats and format-to-format conversion, see the declarative
+[mapping-annotation framework](mapping-parser.md).
