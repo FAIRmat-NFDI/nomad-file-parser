@@ -36,7 +36,7 @@ def _compile_bytes_pattern(pattern: Any) -> re.Pattern:
     if isinstance(pattern, re.Pattern):
         if isinstance(pattern.pattern, bytes):
             return pattern
-        return re.compile(pattern.pattern.encode(), pattern.flags)
+        return re.compile(pattern.pattern.encode(), pattern.flags ^ re.UNICODE)
     return re.compile(pattern.encode())
 
 
@@ -139,7 +139,7 @@ class Quantity:
     def __init__(
         self,
         quantity: Any,
-        re_pattern: str | list | ParsePattern,
+        re_pattern: str | list | ParsePattern | re.Pattern,
         **kwargs,
     ):
         self.name: str
@@ -167,7 +167,7 @@ class Quantity:
         self.dtype = kwargs.get('dtype', self.dtype)
         self.unit = kwargs.get('unit', self.unit)
         self.shape = kwargs.get('shape', self.shape)
-        self._re_pattern: str = (
+        self._re_pattern: str | re.Pattern = (
             re_pattern.re_pattern
             if isinstance(re_pattern, ParsePattern)
             else '|'.join(re_pattern)
@@ -180,6 +180,8 @@ class Quantity:
             re_patterns = [m for m in match] if match else [re_pattern]
         elif isinstance(re_pattern, ParsePattern):
             re_patterns = [re_pattern.re_pattern]
+        elif isinstance(re_pattern, re.Pattern):
+            re_patterns = [re_pattern]
         else:
             re_patterns = re_pattern
         self.re_patterns = [_compile_bytes_pattern(p) for p in re_patterns]
@@ -208,7 +210,7 @@ class Quantity:
             self._re_pattern.pattern, str
         ):
             self._re_pattern = re.compile(
-                self._re_pattern.pattern.encode(), self._re_pattern.flags
+                self._re_pattern.pattern.encode(), self._re_pattern.flags ^ re.UNICODE
             )
         return self._re_pattern
 
