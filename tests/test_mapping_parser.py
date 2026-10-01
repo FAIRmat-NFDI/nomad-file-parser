@@ -840,3 +840,140 @@ class TestMappingParser:
         assert isinstance(parser.data_object.items[1], ItemTypeB)
         assert parser.data_object.items[1].name == 'second'
         assert parser.data_object.items[1].property_b == 'value_b'
+
+
+class PolySettings(ArchiveSection):
+    name = Quantity(type=str)
+
+
+class PolyA(PolySettings):
+    alpha = Quantity(type=float)
+
+
+class PolyB(PolySettings):
+    beta = Quantity(type=float)
+
+
+class PolyC(PolySettings):
+    gamma = Quantity(type=float)
+
+
+class PolyRoot(ArchiveSection):
+    settings = SubSection(sub_section=PolySettings, repeats=True)
+
+
+PolyRoot.m_def.m_annotations[MAPPING_ANNOTATION_KEY] = dict(
+    k1=MapperAnnotation(mapper='@'), k2=MapperAnnotation(mapper='@')
+)
+
+POLY_SUBCLASSES = {'A': PolyA, 'B': PolyB, 'C': PolyC}
+POLY_FIELD = {'A': 'alpha', 'B': 'beta', 'C': 'gamma'}
+POLY_KEYS = ('k1', 'k2')
+POLY_SOURCE = {'alpha': 1.0, 'beta': 2.0, 'gamma': 3.0}
+
+
+class TestPolymorphicSubsectionResolution:
+    """Regression tests for polymorphic sub-section resolution after the
+    removal of the ``mapper_m_def`` slot read (the cross-parser poisoning:
+    a slot stamped on the shared definition by one plugin redirected and
+    was consumed by whichever parser built its mappers first).
+
+    Properties under test, checked exhaustively over the small input space:
+        ∀ layout, slot, order:  Isolated(k1) ∧ Isolated(k2) ∧ Unmutated(defs)
+    """
+
+    @staticmethod
+    def apply_layout(layout: set) -> None:
+        """(Re)write the fixture's annotations: entry (X, k) fully annotates
+        subclass X (section + its quantity) under key k; all else bare."""
+        for cls_name, cls in POLY_SUBCLASSES.items():
+            cls.m_def.m_annotations[MAPPING_ANNOTATION_KEY] = {
+                k: MapperAnnotation(mapper='.@') for x, k in layout if x == cls_name
+            }
+            quantity = getattr(cls, POLY_FIELD[cls_name])
+            quantity.m_annotations[MAPPING_ANNOTATION_KEY] = {
+                k: MapperAnnotation(mapper=f'.{POLY_FIELD[cls_name]}')
+                for x, k in layout
+                if x == cls_name
+            }
+
+    @staticmethod
+    def assert_key_resolution(key: str, layout: set) -> None:
+        target = MetainfoParser(annotation_key=key, data_object=PolyRoot())
+        ExampleParser(data=deepcopy(POLY_SOURCE)).convert(target)
+        built = list(target.data_object.settings or [])
+        expected = sorted(x for x, k in layout if k == key)
+        assert sorted(type(s).__name__[-1] for s in built) == expected
+        for section in built:
+            field = POLY_FIELD[type(section).__name__[-1]]
+            assert getattr(section, field) == POLY_SOURCE[field]
+
+    def test_polymorphic_scan_resolves_per_key(self):
+        """The m_def-to-subsection feature's intent without the slot: the
+        inheriting-section scan picks exactly the subclasses annotated under
+        the active key."""
+        self.apply_layout({('A', 'k1'), ('B', 'k2')})
+        PolyRoot.settings.more.pop('mapper_m_def', None)
+
+        self.assert_key_resolution('k1', {('A', 'k1')})
+        self.assert_key_resolution('k2', {('B', 'k2')})
+
+    def test_legacy_slot_is_inert_and_unmutated(self):
+        """A slot left by an un-migrated writer must not hijack a foreign
+        key's resolution, and must survive the mapper build (the removed
+        reader popped it, poisoning whichever parser built first)."""
+        self.apply_layout({('A', 'k1'), ('B', 'k2')})
+        slot_value = PolyA.m_def.qualified_name()
+        PolyRoot.settings.more['mapper_m_def'] = slot_value
+        try:
+            self.assert_key_resolution('k2', {('B', 'k2')})
+            assert PolyRoot.settings.more.get('mapper_m_def') == slot_value
+            self.assert_key_resolution('k1', {('A', 'k1')})
+            assert PolyRoot.settings.more.get('mapper_m_def') == slot_value
+        finally:
+            PolyRoot.settings.more.pop('mapper_m_def', None)
+
+    @pytest.mark.parametrize(
+        'layout',
+        [
+            frozenset(),
+            frozenset({('A', 'k1')}),
+            frozenset({('A', 'k1'), ('B', 'k2')}),
+            frozenset({('A', 'k1'), ('B', 'k1'), ('C', 'k1')}),
+            frozenset({('A', 'k1'), ('A', 'k2')}),
+            frozenset({('A', 'k1'), ('B', 'k1'), ('A', 'k2'), ('C', 'k2')}),
+        ],
+        ids=['empty', 'single', 'disjoint', 'one-key', 'shared-class', 'mixed'],
+    )
+    @pytest.mark.parametrize('slot', [None, 'A', 'B', 'C'])
+    @pytest.mark.parametrize('order', [('k1', 'k2'), ('k2', 'k1')])
+    def test_annotation_layout_matrix(self, layout, slot, order):
+        """Exhaustive: per-key isolation and definition non-mutation hold for
+        every representative layout x slot value x key-convert order."""
+        self.apply_layout(set(layout))
+        if slot is None:
+            PolyRoot.settings.more.pop('mapper_m_def', None)
+        else:
+            PolyRoot.settings.more['mapper_m_def'] = POLY_SUBCLASSES[
+                slot
+            ].m_def.qualified_name()
+        try:
+            snapshot = {
+                name: (
+                    deepcopy(cls.m_def.m_annotations.get(MAPPING_ANNOTATION_KEY)),
+                    PolyRoot.settings.more.get('mapper_m_def'),
+                )
+                for name, cls in POLY_SUBCLASSES.items()
+            }
+
+            for key in order:
+                self.assert_key_resolution(key, set(layout))
+
+            for name, cls in POLY_SUBCLASSES.items():
+                annotations, slot_before = snapshot[name]
+                assert (
+                    cls.m_def.m_annotations.get(MAPPING_ANNOTATION_KEY) == annotations
+                )
+                assert PolyRoot.settings.more.get('mapper_m_def') == slot_before
+        finally:
+            PolyRoot.settings.more.pop('mapper_m_def', None)
