@@ -1,4 +1,5 @@
 import logging
+import re
 
 import numpy as np
 import pint
@@ -537,6 +538,37 @@ class TestTextParser:
             94.47898900
         )
         assert parser.groundstate.final_scf.dos_fermi == pytest.approx(94.47898904)
+
+    def _parse_text(self, quantities: list[Quantity]) -> dict:
+        text = '''other content
+===header===
+ITER 0 E -10
+ITER 1 E -9
+ITER 2 E -8
+===footer===
+other content'''
+        parser = TextParser(quantities=quantities)
+        parser._file_handler = text.encode()
+        parser.parse()
+        return parser._results
+
+    def test_regex_str(self):
+        pattern = r'===header===\s*([\s\S]*?)\s*===footer==='
+        expected = ['ITER', 0, 'E', -10.0, 'ITER', 1, 'E', -9.0, 'ITER', 2, 'E', -8.0]
+        results = self._parse_text([Quantity('content', pattern)])
+        assert results.get('content') == expected
+
+    def test_regex_compiled(self):
+        pattern = re.compile(r'===header===\s*([\s\S]*?)\s*===footer===')
+        expected = ['ITER', 0, 'E', -10.0, 'ITER', 1, 'E', -9.0, 'ITER', 2, 'E', -8.0]
+        results = self._parse_text([Quantity('content', pattern)])
+        assert results.get('content') == expected
+
+    def test_regex_multiline(self):
+        pattern = re.compile(r'^(ITER.*)$', re.MULTILINE)
+        expected = [['ITER', 0, 'E', -10.0], ['ITER', 1, 'E', -9.0], ['ITER', 2, 'E', -8.0]]
+        results = self._parse_text([Quantity('content', pattern, repeats=True)])
+        assert results.get('content') == expected
 
 
 class TestDataTextParser:
