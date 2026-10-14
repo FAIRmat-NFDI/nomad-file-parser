@@ -841,6 +841,64 @@ class TestMappingParser:
         assert parser.data_object.items[1].name == 'second'
         assert parser.data_object.items[1].property_b == 'value_b'
 
+    def test_polymorphic_mappers_sort_by_explicit_index(self):
+        class Item(ArchiveSection):
+            label = Quantity(type=str)
+
+        class AtomicItem(Item):
+            pass
+
+        class BeadItem(Item):
+            pass
+
+        class Container(ArchiveSection):
+            items = SubSection(sub_section=Item, repeats=True)
+
+        key = 'ordered_items'
+        Container.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[key] = (
+            MapperAnnotation(mapper='@')
+        )
+        Item.label.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[key] = (
+            MapperAnnotation(mapper='.label')
+        )
+        AtomicItem.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[key] = (
+            MapperAnnotation(mapper='atomic_items')
+        )
+        BeadItem.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[key] = (
+            MapperAnnotation(mapper='bead_items')
+        )
+
+        target = MetainfoParser(data_object=Container(), annotation_key=key)
+        source = ExampleParser(
+            data={
+                'atomic_items': [
+                    {'__index': 1, 'label': 'atom1'},
+                    {'__index': 2, 'label': 'atom2'},
+                ],
+                'bead_items': [
+                    {'__index': 0, 'label': 'bead'},
+                    {'label': 'unindexed bead'},
+                ],
+            }
+        )
+        source.convert(target)
+
+        assert [type(item) for item in target.data_object.items] == [
+            BeadItem,
+            AtomicItem,
+            AtomicItem,
+            BeadItem,
+        ]
+        assert [item.label for item in target.data_object.items] == [
+            'bead',
+            'atom1',
+            'atom2',
+            'unindexed bead',
+        ]
+        assert all('__index' not in item for item in target.data['items'])
+        assert source.data['bead_items'][0]['__index'] == 0
+        assert source.data['atomic_items'][0]['__index'] == 1
+
 
 class PolySettings(ArchiveSection):
     name = Quantity(type=str)
