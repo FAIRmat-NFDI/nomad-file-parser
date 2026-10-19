@@ -1757,6 +1757,10 @@ class Mapper(BaseMapper, validate_assignment=True):
         Returns:
             dict[str, Any]: Dictionary mapping target paths to transformed values.
                            Single values if indices=None, lists if indices specified.
+
+        Mapped dictionaries with an integer ``__index`` are sorted first.
+        Items without one follow in their original relative order. The key is
+        removed before assigning the list.
         """
         dct = {}
 
@@ -1816,6 +1820,8 @@ class Mapper(BaseMapper, validate_assignment=True):
                     # Filter by indices if specified (only include matching positions)
                     if indices and n not in indices:
                         continue
+                    if isinstance(d, dict) and isinstance(v, dict) and '__index' in d:
+                        v = {**v, '__index': d['__index']}
                     # Filter out empty values
                     if not is_not_value(v):
                         value.append(v)
@@ -1827,6 +1833,10 @@ class Mapper(BaseMapper, validate_assignment=True):
                 return [mapper.normalize_data(v) for v in value]
             return value
 
+        def source_index(item: Any) -> int | float:
+            index = item.pop('__index', None) if isinstance(item, dict) else None
+            return index if isinstance(index, int) else float('inf')
+
         for mapper in self.mappers:
             value = []
             for m in mapper:
@@ -1835,6 +1845,7 @@ class Mapper(BaseMapper, validate_assignment=True):
                     mapper_value if isinstance(mapper_value, list) else [mapper_value]
                 )
             if value:
+                value.sort(key=source_index)
                 dct[mapper.target.path.path] = (
                     value[0] if mapper.indices is None else value
                 )
@@ -2587,7 +2598,6 @@ class MetainfoParser(MappingParser):
                 annotation = section_def.m_get_annotations(
                     MAPPING_ANNOTATION_KEY, {}
                 ).get(self.annotation_key)
-
 
             if is_sub_section and not annotation:
                 # Level 3: Search all inheriting sections for annotations (polymorphism)
