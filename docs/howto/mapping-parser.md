@@ -35,6 +35,7 @@ In the simplest case, e.g. a *single quantity*, you may simply write:
 <!-- Given that NOMAD schemas typically follow most conventional file structures, some path parts may overlap. -->
 This works fine for top-level quantities, but those deeper down in the schema have to instantiate their containing sections.
 These can be defined in *absolute* terms, or *relative* to their section above using the *dot notation*, e.g. `.model`.
+How relative paths inherit from their parent, and how the path steps compose, is described in [Path syntax and semantics](../reference/paths.md).
 The annotations themselves can be manipulated in two possible ways:
 
 1. *definition* level, i.e. `m_def`.
@@ -116,7 +117,7 @@ They namely require a source and a target, and the schema only defines the sourc
 
 - Extract the first element: `Mapper(mapper='.array[0]')`
 - Extract last element: `Mapper(mapper='.array[-1]')`
-- Extract specific index with pipe syntax: `Mapper(mapper='.varray | [0].v')`
+- Index the complete result with a pipe: `Mapper(mapper='.varray | [0].v')`
 
 **Accessing multiple elements**:
 
@@ -129,6 +130,11 @@ They namely require a source and a target, and the schema only defines the sourc
 - Filter by attribute: `Mapper(mapper='.i[?"@name"==\'program\'] | [0].__value')`
 - Filter by value comparison: `Mapper(mapper='c[?n>=`1`].v | [1]')` <!-- check code rendering -->
 - Complex filter with string matching: `Mapper(mapper='.separator[?"@name"==\'electronic exchange-correlation\']')`
+
+Projections (`[*]`), slices and filters apply the rest of the path to every selected element.
+A pipe ends the projection, so `[?...] | [0]` takes the first match, while `[?...][0]` would index each match separately.
+A field applied to a list reads its last element.
+See [Path syntax and semantics](../reference/paths.md) for the full rules.
 
 ## MappingParser
 
@@ -320,7 +326,7 @@ mappers to its attribute `mapper`. All the paths are instances of `Path` with th
 value of the path to the data given by the attribute `path`. The value of path should
 follow the [jmespath specifications](https://jmespath.org/specification.html){:target="_blank" rel="noopener"} but could be
 prefixed by `.` which indicates that this is a path relative to the parent. This will communicate to the
-mapper which source to get the data.
+mapper which source to get the data (see [Path syntax and semantics](../reference/paths.md#relative-paths-and-inheritance)).
 
 ```python
     Mapper(
