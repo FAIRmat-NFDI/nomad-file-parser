@@ -234,6 +234,14 @@ Run the test suite from this package directory:
 python -m pytest tests
 ```
 
+The path tests in `tests/test_path_laws.py` are property-based and need
+Hypothesis from the `dev` extra. They run 25 generated examples per test by
+default; set `HYPOTHESIS_PROFILE=ci` for 200, or `big` for 5000:
+
+```bash
+HYPOTHESIS_PROFILE=ci python -m pytest tests/test_path_laws.py
+```
+
 Lint and verify formatting with Ruff:
 
 ```bash
