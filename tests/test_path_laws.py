@@ -123,7 +123,8 @@ def addresses(
     """The common generator: a source `x` and a path `p ∈ E(x)`.
 
     The walk starts at the root and takes, at an object, an existing key
-    (preferring one that continues), at a list, an index in range or `[*]`
+    (preferring one that continues), at a list, an index in range (negative
+    ones included) or `[*]`
     (continuing in one element). It stops at a leaf, at an empty container,
     or with probability 1/10 per step, so `⟦p⟧(x) is not None` except where
     a leaf holds `None`. `project=False` never takes `[*]`; `project_first`
@@ -148,7 +149,7 @@ def addresses(
             chain.append(PROJECT)
             value = draw(st.sampled_from(value))
         else:
-            index = draw(st.integers(0, len(value) - 1))
+            index = draw(st.integers(-len(value), len(value) - 1))
             chain.append(index)
             value = value[index]
     return source, chain
@@ -282,6 +283,10 @@ PINNED = [
     ({'a': {'z': 0}}, [['a', 'z']]),  # 0: falsy leaves are values
     ({'a': {'f': False}}, [['a', 'f']]),  # False
     ({'a': {'s': ''}}, [['a', 's']]),  # ''
+    ({'a': [1, 2]}, [['a', -1]]),  # 2: negative index from the end
+    ({'a': [1, 2]}, [['a', -2]]),  # 1: the first element, still in range
+    (LISTS, [['a', PROJECT, 'x', 'y'], [-1]]),  # 2: negative after `|`
+    ({'a': [[1, 2], [3]]}, [['a', PROJECT, -1]]),  # [2, 3]: per element
 ]
 
 
@@ -410,7 +415,9 @@ def test_interpreter_matches_jmespath(case):
 def test_interpreter_matches_path(case):
     """⟦p⟧(x) = run(p, last_on_list)(x): `Path` is the spec plus the last-element rule.
 
-    Negative indices are excluded, since reading them can mutate `x`
+    Negative indices are included where they are in range (the walk takes
+    -len … len - 1); the perturbation inserts only non-negative off-domain
+    indices, since reading a negative one past the start mutates `x`
     (`test_get_does_not_mutate_source`). Records depth and projection hits
     as Hypothesis events.
     """
