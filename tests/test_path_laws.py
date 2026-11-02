@@ -68,6 +68,17 @@ addresses of the generated source; wranglers then change the path: leave the
 domain (`perturbed`), cut it into parent and child (`splits`, `at_projection`)
 or into chains joined by `|` (`pipelines`), or make it unparseable
 (`malformed`).
+
+The mapper tree
+---------------
+
+The last section states how projections compose across nested sections of a
+`Mapper`, on the tree `C` (source `c`) → `S` (source `.s`) → `E` (path `.e`).
+M_K,L(x) is its result with `indices=K` on `C` and `indices=L` on `S`, where
+`[]` requests every element as a list and `None` a single value; values(…)
+reads the `E` values of a result as nested lists. The joined path
+`c[*].s[*].e` serves as the oracle. Pinned cases record current behaviour
+that `OPEN_QUESTIONS.md` asks about.
 """
 
 from copy import deepcopy
@@ -78,7 +89,7 @@ import pytest
 from hypothesis import assume, event, example, given, settings
 from hypothesis import strategies as st
 
-from nomad_file_parser.mapping_parser import Path
+from nomad_file_parser.mapping_parser import Mapper, MappingParser, Path
 
 Step = str | int
 PROJECT = '*'
@@ -603,3 +614,191 @@ def test_default_replaces_parse_errors(case):
     """⟦p⟧ with `default=d` = d when `p` does not parse."""
     source, path = case
     assert Path(path=path).get_data(source, default='DEFAULT') == 'DEFAULT'
+
+
+# Projections across the mapper tree
+
+
+class SourceParser(MappingParser):
+    """A parser over an in-memory source, as the mapper needs one to run."""
+
+    def from_dict(self, dct: dict[str, Any]) -> None:
+        return super().from_dict(dct)  # type: ignore
+
+    def load_file(self) -> Any:
+        return super().load_file()
+
+    def to_dict(self, **kwargs) -> dict[str | int, Any]:
+        return super().to_dict(**kwargs)
+
+
+JOINED = 'c[*].s[*].e'
+
+# SCF steps: with a leaf `e`, or without one.
+steps = st.one_of(st.integers(-2, 2).map(lambda e: {'e': e}), st.just({'x': 0}))
+# Calculations: steps (possibly none), or no `s` at all.
+calculations = st.one_of(
+    st.lists(steps, max_size=3).map(lambda s: {'s': s}), st.just({})
+)
+sources = st.lists(calculations, max_size=4).map(lambda c: {'c': c})
+# Sources in which every calculation has at least one step with a leaf.
+dense = st.lists(
+    st.lists(st.integers(-2, 2), min_size=1, max_size=3), min_size=1, max_size=4
+).map(lambda c: {'c': [{'s': [{'e': e} for e in s]} for s in c]})
+
+
+def section(target: str, source: str, mappers: list, indices: list[int] | None):
+    """The spec of a section mapper; `indices=None` leaves the key unset."""
+    spec = dict(target=target, source=source, mapper=mappers)
+    if indices is not None:
+        spec['indices'] = indices
+    return spec
+
+
+def run_mapper(specs: list[dict[str, Any]], source: dict[str, Any]) -> dict[str, Any]:
+    """The result of the mapper built from `specs` on a copy of `source`."""
+    source = deepcopy(source)
+    mapper = Mapper.from_dict({'mapper': specs})
+    return mapper.get_data(source, SourceParser(data=source))
+
+
+def tree(source, outer: list[int] | None = [], inner: list[int] | None = []):
+    """M_K,L(x) with K = `outer` and L = `inner`."""
+    leaf = dict(target='E', path='.e')
+    specs = [section('C', 'c', [section('S', '.s', [leaf], inner)], outer)]
+    return run_mapper(specs, source)
+
+
+def values(result: dict[str, Any]) -> list[list[Any]]:
+    """The `E` values of a repeating `C` → repeating `S` result as nested lists."""
+    return [[s['E'] for s in c['S']] for c in result.get('C', [])]
+
+
+def per_element(source: dict[str, Any]) -> list[list[Any]]:
+    """⟦s[*].e⟧ on each calculation by source position, `[]` where it fails."""
+    return [get('s[*].e', c) or [] for c in source['c']]
+
+
+@given(dense)
+def test_nested_sections_follow_joined_path(source):
+    """values(M_[],[](x)) = ⟦c[*].s[*].e⟧(x) when every element has a leaf.
+
+    Nesting repeating sections composes like `.` in a path: one list level
+    per section.
+    """
+    assert values(tree(source)) == get(JOINED, source)
+
+
+@given(sources)
+@example({'c': [{'s': [{'e': 1}]}, {'s': []}, {}]})  # empty and missing `s`
+@example({'c': []})
+def test_nested_sections_drop_empty(source):
+    """values(M_[],[](x)) = [l for l in ⟦c[*].s[*].e⟧(x) if l != []].
+
+    The path drops only `None` (missing `s`) and keeps `[]` for a
+    calculation without leaves; the mapper drops both (questions 8, 9).
+    """
+    expected = [inner for inner in get(JOINED, source) if inner]
+    assert values(tree(source)) == expected
+
+
+@given(sources)
+def test_unindexed_outer_takes_first(source):
+    """M_None,[](x) = {C: c1} for the first non-empty repeat c1 of M_[],[](x).
+
+    Without `indices`, a section keeps only the first non-empty element of a
+    list source (question 7); `{}` when there is none.
+    """
+    repeats = tree(source).get('C', [])
+    expected = {'C': repeats[0]} if repeats else {}
+    assert tree(source, outer=None) == expected
+
+
+@given(sources)
+def test_unindexed_inner_takes_first(source):
+    """M_[],None(x)[C][i] = {S: {E: l[0]}} for each non-empty l in values(M_[],[](x)).
+
+    The same rule one level down: each calculation keeps its first step with
+    a leaf, not a list of them.
+    """
+    expected = [{'S': {'E': inner[0]}} for inner in values(tree(source))]
+    assert tree(source, inner=None).get('C', []) == expected
+
+
+@st.composite
+def indexed(draw):
+    """A source with at least one calculation and a non-empty subset K of its positions."""
+    source = draw(sources.filter(lambda x: x['c']))
+    positions = st.integers(0, len(source['c']) - 1)
+    return source, sorted(draw(st.sets(positions, min_size=1)))
+
+
+@given(indexed())
+def test_indices_are_source_positions(case):
+    """values(M_K,[](x)) = [l_n for n in K if l_n != []], l_n = ⟦s[*].e⟧(c_n).
+
+    `indices` select by position in the source, before empty elements are
+    dropped, so they do not count positions of the output.
+    """
+    source, positions = case
+    expected = [
+        inner for n, inner in enumerate(per_element(source)) if n in positions and inner
+    ]
+    assert values(tree(source, outer=positions)) == expected
+
+
+TWO = {'c': [{'s': [{'e': 1}, {'e': 2}]}, {'s': [{'e': 3}]}]}
+GAP = {'c': [{'s': [{'e': 1}, {'e': 2}]}, {'s': []}, {'s': [{'e': 3}]}]}
+TREE_TWO = {'C': [{'S': [{'E': 1}, {'E': 2}]}, {'S': [{'E': 3}]}]}
+
+
+def leaf_under(source: str) -> list[dict[str, Any]]:
+    """One repeating section `S` with source `source` and the quantity `E` = `.e`."""
+    return [section('S', source, [dict(target='E', path='.e')], [])]
+
+
+@pytest.mark.parametrize(
+    'specs, source, expected',
+    [
+        pytest.param(
+            None,
+            GAP,
+            {'C': [{'S': [{'E': 1}, {'E': 2}]}, {'S': [{'E': 3}]}]},
+            id='missing-vs-empty',
+        ),
+        pytest.param(
+            leaf_under('c[*].s[*]'),
+            TWO,
+            {'S': [{'E': 1}, {'E': 3}]},
+            id='source-double-projection',
+        ),
+        pytest.param(
+            leaf_under('c[*].s'),
+            TWO,
+            {'S': [{'E': 1}, {'E': 3}]},
+            id='source-projection-of-lists',
+        ),
+        pytest.param([1, 0], TWO, TREE_TWO, id='indices-order-ignored'),
+        pytest.param(
+            [0, 0], TWO, {'C': [{'S': [{'E': 1}, {'E': 2}]}]}, id='indices-duplicate'
+        ),
+        pytest.param([-1], TWO, {}, id='indices-negative'),
+        pytest.param([5], TWO, {}, id='indices-out-of-range'),
+        pytest.param([1], GAP, {}, id='indices-select-empty'),
+    ],
+)
+def test_mapper_pinned(specs, source, expected):
+    """Current behaviour asked about in `OPEN_QUESTIONS.md` (questions 8 to 12).
+
+    `specs` is either the `indices` of `C` in M_K,[] or a full mapper spec;
+    `None` means M_[],[]. For `missing-vs-empty`, ⟦c[*].s[*].e⟧ keeps the
+    middle `[]` that the mapper drops.
+    """
+    if specs is None:
+        assert get(JOINED, source) == [[1, 2], [], [3]]
+        result = tree(source)
+    elif all(isinstance(i, int) for i in specs):
+        result = tree(source, outer=specs)
+    else:
+        result = run_mapper(specs, source)
+    assert result == expected
