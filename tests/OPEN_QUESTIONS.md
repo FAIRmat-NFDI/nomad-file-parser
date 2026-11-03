@@ -52,6 +52,32 @@ Questions 9 to 12 were run on `test/pbt-path-laws` at `38ed0c8`, on the source `
    An out-of-range entry (`[5]`) also gives `{}` silently.
    Should negative entries count from the end, as in paths, or be rejected?
 
+## Polymorphic subsections (`MetainfoParser`)
+
+Questions 13 to 18 were run on `test/pbt-path-laws` at `99ccf35`, on an unannotated base `Shape` with the subclasses `Circle` (`radius`), `Square` (`side`) and `Triangle` (`height`) under the repeating subsection `Drawing.shapes`.
+
+13. **Merging across subclasses keeps the first type.**
+   Two passes with `update_mode='merge'`, `Circle` under `k1` and then `Square` under `k2`, on `{radius: 1, side: 2}` give `[Circle(radius=1)]`: the second pass aligns `Square` with the existing element at position 0, the first type wins and `side` is lost without a warning.
+   Should a merge at a position whose `m_def` differs append instead, fail, or keep this behaviour?
+14. **An unresolvable `m_def` falls back to the base.**
+   In `from_dict`, an element whose `m_def` names no section of the hierarchy (unknown, or a section outside it) is built as the declared base type.
+   With a base field (`name`) it survives as a `Shape`; with a subclass field it is dropped as empty. Neither case is logged.
+   Should an unresolvable `m_def` be reported, or rejected?
+15. **A field of another subclass is dropped silently.**
+   `{m_def: Square, radius: 1}` gives no element: `radius` is not a `Square` quantity, `m_set` fails inside a bare `except`, and the element is dropped as empty.
+   Should a value that does not fit the resolved type be reported?
+16. **Scalar update modes all overwrite.**
+   A second pass replaces a scalar (`Drawing.title`) under `append`, `merge` and `replace` alike, whereas the `Path.set_data` docstring describes `append` as "keep existing data if present" and the dictionary-level code keeps the current scalar under `merge`.
+   Which is intended at the archive level, and should the docstring change?
+17. **Falsy-only subsections are dropped.**
+   A subsection whose only value is falsy (`Circle(radius=0.0)`, `Shape(name='')`) is treated as empty by `from_dict` (`or v` in the emptiness check) and removed, while the `Mapper` keeps falsy values (`is_not_value` compares with `None`, `[]`, `{}`).
+   Is this intended, or should the emptiness check match the mapper's?
+18. **A later pass reuses a misaligned element and reassigns its `m_def`.**
+   Pass `k1` maps `Circle` and `Triangle`, pass `k2` maps nothing, both with `append`, on `{height: 1}`.
+   Pass 1 drops the empty `Circle` from the archive but keeps `{m_def: Circle}` at position 0 of the parser's intermediate data, where the archive now holds the `Triangle`.
+   Pass 2 replays the data by position, reuses that `Triangle` instance and sets its `m_def` to `Circle` (`sub_section.m_def = section_def`), so the result is `[Triangle with m_def Circle, Triangle(height=1)]`: a Python class and a definition that disagree, and a duplicate.
+   This looks like a defect rather than a design question; it follows from question 8 (dropped positions) and pinning it as a strict xfail assumes so.
+
 ## Answers
 
 | # | Topic | Answer | Affected test |
@@ -68,3 +94,9 @@ Questions 9 to 12 were run on `test/pbt-path-laws` at `38ed0c8`, on the source `
 | 10 | projection in a source path | | `test_mapper_pinned[source-double-projection]`, `test_mapper_pinned[source-projection-of-lists]` |
 | 11 | `indices=[]` as "all" | | `test_mapper_pinned[indices-order-ignored]`, `test_mapper_pinned[indices-duplicate]` |
 | 12 | negative `indices` | | `test_mapper_pinned[indices-negative]`, `test_mapper_pinned[indices-out-of-range]` |
+| 13 | merge across subclasses | | `test_merge_across_subclasses_keeps_first` |
+| 14 | unresolvable `m_def` | | `test_from_dict_pinned[unknown-m-def-base-field]`, `[unknown-m-def-subclass-field]`, `[m-def-outside-hierarchy]` |
+| 15 | field of another subclass | | `test_from_dict_pinned[field-of-other-subclass]` |
+| 16 | scalar update modes | | `test_scalar_passes_overwrite` |
+| 17 | falsy-only subsections | | `test_from_dict_pinned[falsy-only-subsection]` |
+| 18 | misaligned element reuse | | `test_append_pass_reuses_misaligned_element` (strict xfail) |
