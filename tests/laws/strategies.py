@@ -160,7 +160,7 @@ def at_projection(draw, tail_field: bool = False) -> tuple[Tree, PathStr, PathSt
 
 @st.composite
 def pipelines(draw, min_index: int = 0) -> tuple[Tree, PathStr]:
-    """Wrangler: a perturbed path cut into segments p1 | … | pm, m ≤ 3.
+    """Wrangler: a perturbed path cut into segments p1 | … | pm, m <= 3.
 
     `min_index < 0` lets the perturbation insert negative indices.
     """

@@ -41,7 +41,7 @@ def run_mapper(specs: list[dict[str, Any]], source: dict[str, Any]) -> dict[str,
 
 
 def tree(source, outer: list[int] | None = [], inner: list[int] | None = []):
-    """M_K,L(obj) with K = `outer` and L = `inner`."""
+    """Run the mapper C → S → E on `source`, with `indices=outer` on C and `indices=inner` on S."""
     leaf = dict(target='E', path='.e')
     specs = [section('C', 'c', [section('S', '.s', [leaf], inner)], outer)]
     return run_mapper(specs, source)

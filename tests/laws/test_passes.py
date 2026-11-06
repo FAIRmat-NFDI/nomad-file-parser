@@ -18,8 +18,9 @@ from .shapes import (
 
 @given(kind_sets, kind_sets, full_shape_data)
 def test_append_passes_concatenate(kinds1, kinds2, data):
-    """M_k1 then M_k2 with `append` = built(S1, x) ++ built(S2, x) on `shapes`.
+    """summary(convert([(k1, x), (k2, x)], 'append').shapes) = built(K1, x) + built(K2, x).
 
+    `K1` and `K2` are the subclasses annotated under `k1` and `k2`.
     A second pass under another key adds its subclasses after the first
     pass's, so heterogeneous subtypes collect in one list. Every field is in
     the source: an annotated subclass without data in the first pass leaves
@@ -35,8 +36,9 @@ def test_append_passes_concatenate(kinds1, kinds2, data):
 
 @pytest.mark.question(13)
 def test_merge_across_subclasses_keeps_first():
-    """Two passes with `merge`, `Circle` under k1 then `Square` under k2, give [Circle].
+    """summary(convert([(k1, x), (k2, x)], 'merge').shapes) = [('Circle', {radius: 1.0})].
 
+    With `Circle` under `k1`, `Square` under `k2` and x = {radius: 1.0, side: 2.0}.
     The second pass aligns `Square` with the existing `Circle` at position 0;
     the type of the first pass wins and `side` is lost (question 13).
     """
@@ -49,7 +51,10 @@ def test_merge_across_subclasses_keeps_first():
 @pytest.mark.question(16)
 @pytest.mark.parametrize('mode', ['append', 'merge', 'replace'])
 def test_scalar_passes_overwrite(mode):
-    """A second pass overwrites a scalar under every mode (question 16)."""
+    """convert([(k1, {title: 'old'}), (k2, {title: 'new'})], mode).title = 'new' for every mode.
+
+    A second pass overwrites a scalar under every mode (question 16).
+    """
     annotate(set())
     drawing = convert([('k1', {'title': 'old'}), ('k2', {'title': 'new'})], mode)
     assert drawing.title == 'new'
@@ -58,8 +63,10 @@ def test_scalar_passes_overwrite(mode):
 @pytest.mark.question(18)
 @pytest.mark.xfail(strict=True, reason='a later pass reuses a misaligned element')
 def test_append_pass_reuses_misaligned_element():
-    """Passes k1 (`Circle`, `Triangle`) then k2 (nothing), `append`, on {height: 1}: [Triangle].
+    """summary(convert([(k1, x), (k2, x)], 'append').shapes) = [('Triangle', {height: 1.0})].
 
+    With `Circle` and `Triangle` under `k1`, nothing under `k2` and
+    x = {height: 1.0}.
     Pass 1 drops the empty `Circle` from the archive but keeps it in the
     parser's intermediate data, so position 0 holds `Circle` there and
     `Triangle` in the archive. Pass 2 replays the data by position, reuses

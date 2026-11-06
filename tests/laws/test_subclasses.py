@@ -27,8 +27,10 @@ from .shapes import (
 
 @given(kind_sets, shape_data)
 def test_build_maps_annotated_kinds(kinds, data):
-    """summary(shapes) = [(X, {f_X: x[f_X]}) for X in KINDS if X ∈ S and f_X ∈ x].
+    """summary(convert([(k1, x)]).shapes) = built(K, x), `K` the subclasses annotated under `k1`.
 
+    built(K, x) lists (X, {field of X: its value in x}) for each X in `K`
+    whose field is in `x`, in the definition order of the subclasses.
     The unannotated base defers to every subclass annotated under the active
     key; a subclass is built when its field is in the source, in the
     definition order of the subclasses.
@@ -39,7 +41,10 @@ def test_build_maps_annotated_kinds(kinds, data):
 
 @given(kind_sets, shape_data, st.randoms(use_true_random=False))
 def test_build_ignores_source_order(kinds, data, random):
-    """M(x) = M(x') for a permutation x' of the keys of `x`: order comes from the schema."""
+    """summary(convert([(k1, x2)]).shapes) = summary(convert([(k1, x)]).shapes) for a permutation x2 of the keys of `x`.
+
+    The order of the sections comes from the schema, not from the source.
+    """
     annotate({(kind, 'k1') for kind in kinds})
     keys = list(data)
     random.shuffle(keys)
@@ -50,7 +55,9 @@ def test_build_ignores_source_order(kinds, data, random):
 
 @given(st.lists(elements, max_size=5))
 def test_from_dict_keeps_type_per_element(items):
-    """summary(from_dict(xs)) = [(m_def(x), fields(x)) for x in xs if fields(x)].
+    """summary(MetainfoParser(data_object=Drawing()).from_dict({shapes: xs})) = [(X, {f: v}) for X, f, v in xs if v is not None].
+
+    Each element of `xs` is {m_def: X, f: v}, with `f` the field of `X` (`name` for `Shape`).
 
     Each element's type comes from its own `m_def`, so one repeating
     subsection holds mixed subtypes in input order; elements without data

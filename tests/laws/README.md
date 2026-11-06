@@ -48,11 +48,11 @@ Pinned cases are listed with their expected value per case.
 | `@`, `.p` | the current node; `p` relative to a parent path |
 | `.q under p` | the relative child `.q` of the parent `p` |
 | `E(obj)` | the paths that exist in `obj` |
-| `∈`, `∉`, `⇒`, `≤`, `≥` | membership, absence, implication, at most, at least |
+| `∈`, `∉`, `⇒`, `<=`, `>=` | membership, absence, implication, at most, at least |
 | `p[:i]`, `p[i:]` | the first `i` steps of `p`, and the remaining ones |
 | `P(…)` | the share of generated cases with a property |
 
-The repetition laws add `M_K,L(obj)` for the result of the mapper tree `C` → `S` → `E` with `indices=K` on `C` and `indices=L` on `S`, and `values(…)` for its `E` values as nested lists (see the module docstring of `test_repetition.py`).
+The mapper laws name the helpers that run the mapper: `tree(obj, outer=K, inner=L)` runs the mapper tree `C` → `S` → `E` with `indices=K` on `C` and `indices=L` on `S`, and `values(…)` reads its `E` values as nested lists (`trees.py`); `convert(passes, update_mode)` runs the `MetainfoParser` once per `(key, x)` pass on one `Drawing`, and `summary(sections)` lists the type and set values of each section (`shapes.py`).
 
 ## Standard JMESPath behaviour (not tested here)
 

@@ -49,14 +49,29 @@ def test_field_on_list_reads_last(items, k):
 
 @given(any_node, st.integers(-3, 3))
 def test_index_step(node, i):
-    """Path([i]).get_data(v) = v[i] when `v` is a list and -len(v) ≤ i < len(v), else None.
+    """Path([i]).get_data(v) = v[i] when `v` is a list and -len(v) <= i < len(v), else None.
 
-    Negative indices past the start are left to `test_get_does_not_mutate_source`.
+    For every `i` except a negative index past the start of a list
+    (i < -len(v)), which is the next law.
     """
     assume(not (isinstance(node, list) and i < -len(node)))
     found = isinstance(node, list) and -len(node) <= i < len(node)
     expected = node[i] if found else None
     assert Path(path=f'[{i}]').get_data(node) == expected
+
+
+@pytest.mark.question(2)
+@pytest.mark.xfail(strict=True, reason='negative index past the start reads an element')
+@given(st.lists(any_node, max_size=3), st.integers(1, 3))
+def test_index_past_start_is_none(items, extra):
+    """Path([i]).get_data(vs) = None for a list `vs` and i < -len(vs).
+
+    Fails: `visit_index` guards only the positive side in search mode and
+    pads the list, so Path([-3]).get_data([1, 2]) = 1 (and the list becomes
+    [1, 2, {}], see `test_get_does_not_mutate_source`).
+    """
+    i = -len(items) - extra
+    assert Path(path=f'[{i}]').get_data(items) is None
 
 
 # A list of objects in which one element lacks the field `x`.

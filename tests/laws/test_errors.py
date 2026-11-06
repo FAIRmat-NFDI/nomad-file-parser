@@ -20,7 +20,7 @@ def test_get_does_not_mutate_source(case):
 
     Fails for a negative index past the start, which `visit_index` pads in
     search mode: Path(a[-3]).get_data({a: [1, 2]}) = 1 and leaves {a: [1, 2, {}]}.
-    """  # TODO: bug?
+    """
     obj, path = case
     before = deepcopy(obj)
     Path(path=path).get_data(obj)

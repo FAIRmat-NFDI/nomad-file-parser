@@ -38,15 +38,55 @@ Questions 9 to 12 were run on `test/pbt-path-laws` at `38ed0c8`, on the source `
    Two repeating mappers, `c` (`indices=[]`) with child `.s` (`indices=[]`) and quantity `.e`, give the nesting of the joined path `c[*].s[*].e` as long as every element has data.
    They differ once an element is empty: the path keeps `[]` for an element whose `s` is an empty list and drops only `None` (missing `s`), whereas the mapper drops both (question 8).
    Is the joined path the intended reference for the shape of nested sections, up to the dropping of empty elements?
-10. **A projection in a source path does not nest.**
-   A single repeating mapper with source `c[*].s` or `c[*].s[*]` (`indices=[]`) and child `.e` gives `[{'E': 1}, {'E': 3}]`: one section per element of `c`, with each inner list reduced to its first element.
-   The path `c[*].s[*].e` gives `[[1, 2], [3]]`.
-   The reduction takes the first element, while a field step on a list in `Path` takes the last (question 1).
-   Should a doubly projected source be flattened into one section per leaf, rejected, or kept as is, and should the first-versus-last choice agree with `Path`?
+
+   On `{'c': [...]}` with the six calculations below, the joined path agrees in JMESPath and `Path`, and the mapper (`C` → `S` → `E`, both `indices=[]`) drops more:
+
+   | Calculation | `s[*].e` in JMESPath | `s[*].e` in `Path` | in `c[*].s[*].e` | in the mapper |
+   |---|---|---|---|---|
+   | `{'s': [{'e': 1}, {'e': 2}]}` | `[1, 2]` | `[1, 2]` | kept | `{S: [{E: 1}, {E: 2}]}` |
+   | `{'s': []}` | `[]` | `[]` | kept as `[]` | dropped |
+   | `{}` (no `s`) | `None` | `None` | dropped | dropped |
+   | `{'s': [{'x': 0}]}` | `[]` | `[]` | kept as `[]` | dropped |
+   | `{'s': None}` | `None` | `None` | dropped | dropped |
+   | `{'s': [{'e': 3}]}` | `[3]` | `[3]` | kept | `{S: [{E: 3}]}` |
+   | **result** | | | `[[1, 2], [], [], [3]]` | `[[1, 2], [3]]` |
+
+   A projection drops an element only when the rest of the expression gives `None` (`s` missing or not a list), as the JMESPath specification prescribes; neither the path nor the mapper keeps all six positions.
+
+   **Closed:** the joined path is standard JMESPath, and `Path` agrees with it (`test_joined_path_is_jmespath`), so it is a valid reference for the shape of nested sections. What remains is the mapper's additional dropping of `[]`, which is question 8.
+10. **One mapper over two list levels does not nest.**
+   Sections nest when each list level has its own repeating mapper: `C` (source `c`) with the child `S` (source `.s`) gives one `C` per calculation, each holding one `S` per step.
+   They do not nest when a single repeating mapper's source already crosses both levels (`c[*].s` or `c[*].s[*]`, whose value is a list of lists): the mapper makes one section per outer element and reads its child `.e` from the inner list as a whole, keeping that list's first element.
+   On `{'c': [{'s': [{'e': 1}, {'e': 2}]}, {'s': [{'e': 3}]}]}`:
+
+   | Mapper | Source value | Sections | Comparable path | in `Path` | in JMESPath |
+   |---|---|---|---|---|---|
+   | `C` (`c`) → `S` (`.s`) → `E` (`.e`) | per level | `C: [{S: [{E: 1}, {E: 2}]}, {S: [{E: 3}]}]`, nested | `c[*].s[*].e` | `[[1, 2], [3]]` | `[[1, 2], [3]]` |
+   | `S` (`c[*].s[*]`) → `E` (`.e`) | `[[{e: 1}, {e: 2}], [{e: 3}]]` | `S: [{E: 1}, {E: 3}]`, one per calculation, first step only | `c[*].s[0].e`, the explicit first step | `[1, 3]` | `[1, 3]` |
+   | `S` (`c[*].s`) → `E` (`.e`) | the same | `S: [{E: 1}, {E: 3}]` | `c[*].s.e`, a field on the inner list | `[2, 3]`, the last step (question 1) | `[]`, a field on a list is `null` |
+   | `S` (`c[*].s[]`) → `E` (`.e`) | `[{e: 1}, {e: 2}, {e: 3}]`, flattened | `S: [{E: 1}, {E: 2}, {E: 3}]`, one per step | `c[*].s[].e` | `[1, 2, 3]` | `[1, 2, 3]` |
+
+   Flattening with `[]` already gives one section per step, so nothing is missing for that case.
+   The mapper's cut to the first inner element is what JMESPath spells explicitly as `[0]`; read implicitly, as a field on the inner list, `Path` takes the last element and JMESPath gives nothing.
+   The open points are the two middle rows: should a source whose value is a list of lists be rejected or warned about rather than cut silently to the first inner element, and if it is kept, should the mapper take the first element while a field on a list in `Path` takes the last?
 11. **`indices=[]` means "all elements, as a list".**
-   An empty list disables the filter (`if indices and n not in indices`) while still making the result a list (`mapper.indices is None` is false), so it is the only way to request every element of a repeating section.
-   The order of `indices` is ignored (`[1, 0]` gives source order) and duplicates collapse (`[0, 0]` gives one element).
-   Is `[]` the intended spelling of "all", and should the order of `indices` matter?
+   `indices` is a field of `Mapper` (`mapping_parser.py`, `indices: list[int] | str | None`) and of the mapping annotation (`nomad.datamodel.metainfo.annotations.Mapper.indices`), where a string names a function or attribute of the parser that yields the list.
+   It selects elements of a list source by position, and its value also decides the shape of the result:
+
+   | `indices` | Elements kept | Result | Set by | In JMESPath |
+   |---|---|---|---|---|
+   | `None` | the first non-empty one (question 7) | one section | `MetainfoParser.build_section_mapper` for a non-repeating subsection | `c[0]` or `c[*] \| [0]`: the element at position 0, empty or not |
+   | `[]` | all | a list of sections | `build_section_mapper` for every repeating subsection, and for subclass mappers | `c[*]` |
+   | `[0, 2]` | those at source positions 0 and 2 (question 8) | a list | an annotation, explicitly | `[c[0], c[2]]` (multi-select) |
+   | `'name'` | `getattr(parser, 'name')`, called if callable | a list | an annotation, explicitly | no equivalent: computed by the parser |
+
+   JMESPath expresses the shape by syntax, `[*]` for a list and `[i]` for one value, so it never needs one value for both roles.
+   Its multi-select also behaves differently from an explicit `indices` list: `[c[1], c[0]]` keeps the order given, `[c[0], c[0]]` keeps both, `c[-1]` counts from the end, and `c[5]` gives `None`.
+
+   The two roles come from two tests in `Mapper.get_data`: `if indices and n not in indices` filters, so an empty list filters nothing, and `mapper.indices is None` decides whether the result is a single value or a list.
+   The parsers never write `indices=[]` themselves; it follows from `SubSection(repeats=True)`.
+   For an explicit list, order is ignored (`[1, 0]` gives source order) and duplicates collapse (`[0, 0]` gives one element).
+   Should "all elements" have its own spelling, so that `[]` is not both "no filter" and "make it a list", and should the order of an explicit `indices` list matter?
 12. **Negative entries in `indices` match nothing.**
    `indices=[-1]` gives `{}`, since the source positions `n` compared against it are never negative, whereas the path step `[-1]` selects the last element.
    An out-of-range entry (`[5]`) also gives `{}` silently.
@@ -85,14 +125,14 @@ Questions 13 to 18 were run on `test/pbt-path-laws` at `99ccf35`, on an unannota
 | # | Theme | Topic | Answer | Affected test |
 |---|---|---|---|---|
 | 1 | steps | field on a list | | `test_field_on_list_reads_last`, `test_pinned_steps[field-on-list]`, `[field-after-closed-projection]`, `[field-on-list-in-filter-condition]` |
-| 2 | errors | negative index past the start | | `test_get_does_not_mutate_source` (strict xfail) |
+| 2 | errors, steps | negative index past the start | | `test_get_does_not_mutate_source`, `test_index_past_start_is_none` (both strict xfail) |
 | 3 | errors | slice past the end | | slices are not generated yet |
 | 4 | errors | prefix inside a function | | `test_prefix_in_function_does_not_parse` |
 | 5 | errors | bare `.` | | `test_bare_prefix_is_empty` |
 | 6 | errors | `default=` | | `test_default_ignored_when_parseable`, `test_default_replaces_parse_errors` |
 | 7 | repetition | list source without `indices` | | `test_unindexed_outer_takes_first`, `test_unindexed_inner_takes_first` |
 | 8 | repetition | dropped positions | | `test_nested_sections_drop_empty`, `test_mapper_pinned[indices-select-empty]` |
-| 9 | repetition | nested sections vs joined path | | `test_nested_sections_drop_empty`, `test_mapper_pinned[missing-vs-empty]` |
+| 9 | repetition | nested sections vs joined path | closed: the joined path is JMESPath's; the rest is question 8 | `test_joined_path_is_jmespath`, `test_nested_sections_drop_empty`, `test_mapper_pinned[missing-vs-empty]` |
 | 10 | repetition | projection in a source path | | `test_mapper_pinned[source-double-projection]`, `test_mapper_pinned[source-projection-of-lists]` |
 | 11 | repetition | `indices=[]` as "all" | | `test_mapper_pinned[indices-order-ignored]`, `test_mapper_pinned[indices-duplicate]` |
 | 12 | repetition | negative `indices` | | `test_mapper_pinned[indices-negative]`, `test_mapper_pinned[indices-out-of-range]` |
