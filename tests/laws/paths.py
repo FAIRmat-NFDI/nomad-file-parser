@@ -43,6 +43,16 @@ class PathStr(str):
         """.p: the same path, relative to a parent."""
         return PathStr(f'.{self}')
 
+    def opens_projection(self) -> bool:
+        """Whether a projection is still open at the end of the path.
+
+        A projection is opened by `[*]` and stays open up to the next `|`, so
+        it is open at the end exactly when the last segment contains `[*]`.
+        In JMESPath, slices, filters, `.*` and `[]` open one too; the laws
+        generate none of them.
+        """
+        return PROJECT in self.segments[-1]
+
     def starts_with_field(self) -> bool:
         """Whether the first step is a field, so that `@.p` and `p0.p` are valid."""
         return bool(self.removeprefix('.')[:1].isalpha())

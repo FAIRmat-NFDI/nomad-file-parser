@@ -6,7 +6,7 @@ together they determine every path of the fragment.
 """
 
 import pytest
-from hypothesis import assume, event, example, given
+from hypothesis import assume, event, given
 from hypothesis import strategies as st
 
 from nomad_file_parser.mapping_parser import Path
@@ -81,28 +81,37 @@ def test_pipe_composes(case):
 
 @given(splits(head_project=False))
 def test_dot_equals_pipe_without_projection(case):
-    """Path(p.q).get_data(obj) = Path(p | q).get_data(obj) when `p` opens no projection: the dot nests too."""
+    """Path(p.q).get_data(obj) = Path(p | q).get_data(obj) when `p` opens no projection: the dot nests too.
+
+    `p` opens a projection when a `[*]` is still open at its end, that is, not
+    closed by a `|` (`PathStr.opens_projection`). With one open, the two
+    differ: `a[*].x` maps `x` over the list, `a[*] | x` applies `x` to the list.
+    """
     obj, (p, q) = case
+    assert not p.opens_projection()  # ensured by the generator
     assert Path(path=p.dot(q)).get_data(obj) == Path(path=p | q).get_data(obj)
 
 
 @given(at_projection())
-@example(({'c': [[]]}, PathStr('c'), PathStr('[*].a')))
 def test_dot_maps_under_projection(case):
-    """Path(p0[*].q).get_data(obj) = [Path(q).get_data(o) for o in Path(p0).get_data(obj)], dropping None.
+    """Path(p0[*].q).get_data(obj) = [r for o in Path(p0).get_data(obj) if (r := Path(q).get_data(o)) is not None].
 
     When `p0` opens no projection; None when Path(p0).get_data(obj) is not a
-    list. After a projection the dot applies `q` per element. The
-    restriction matters: if `p0` projects, the appended `[*].q` is captured
-    by it and maps over the inner elements (the pinned example, where
-    Path(c[*][*].a) gives [[]] but mapping `[*].a` over [[]] gives []).
+    list. The restriction matters, since with `p0` projecting the new `[*]`
+    nests inside it. On obj = {c: [[{}]]} with p0 = c[*] and q = a:
+
+        Path(c[*][*].a).get_data(obj)                                  == [[]]
+        [r for o in Path(c[*]).get_data(obj)
+         if (r := Path(a).get_data(o)) is not None]                    == []
+
+    (pinned as `test_pinned_paths[nested-projection-keeps-inner-empty]`).
     """
     obj, p0, q = case
+    assert not p0.opens_projection()  # ensured by the generator
     base = Path(path=p0).get_data(obj)
     mapped = None
     if isinstance(base, list):
-        results = (Path(path=q).get_data(element) for element in base)
-        mapped = [r for r in results if r is not None]
+        mapped = [r for o in base if (r := Path(path=q).get_data(o)) is not None]
     assert Path(path=p0.dot('[*]').dot(q)).get_data(obj) == mapped
 
 
@@ -151,6 +160,12 @@ FIELD_ON_LIST = pytest.mark.question(1)
         pytest.param({'a': {'x': 1}}, 'a[*]', None, id='projection-on-object'),
         pytest.param(
             {'c': [[]]}, 'c[*][*].a', [[]], id='nested-projection-keeps-empty'
+        ),
+        pytest.param(
+            {'c': [[{}]]},
+            'c[*][*].a',
+            [[]],
+            id='nested-projection-keeps-inner-empty',
         ),
         pytest.param(LISTS, 'a.x', {'y': 2}, id='field-on-list', marks=FIELD_ON_LIST),
         pytest.param(

@@ -32,21 +32,20 @@ def test_prefix_equals_reroot(case):
 
 @given(at_projection(tail_field=True))
 def test_projecting_parent_maps_child(case):
-    """.q under p0[*]: Path(p0[*].q).get_data(obj) = [Path(q).get_data(o) for o in Path(p0).get_data(obj)], dropping None.
+    """.q under p0[*]: Path(p0[*].q).get_data(obj) = [r for o in Path(p0).get_data(obj) if (r := Path(q).get_data(o)) is not None].
 
     For `p0` opening no projection. A projecting parent applies its child per
     element, which is what the mapper does when a section's source resolves
     to a list.
     """
     obj, p0, child = case
+    assert not p0.opens_projection()  # ensured by the generator
     child_path = inherit(p0.dot('[*]'), child)
     base = Path(path=p0).get_data(obj)
     mapped = None
     if isinstance(base, list):
-        results = (
-            Path(path=child_path.relative_path).get_data(element) for element in base
-        )
-        mapped = [r for r in results if r is not None]
+        child = Path(path=child_path.relative_path)
+        mapped = [r for o in base if (r := child.get_data(o)) is not None]
     assert Path(path=child_path.absolute_path).get_data(obj) == mapped
 
 
