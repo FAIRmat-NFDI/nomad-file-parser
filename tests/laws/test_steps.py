@@ -1,12 +1,18 @@
-"""Steps that `Path` implements itself: fields and indices.
+"""Steps that `Path` implements itself: fields, indices and slices.
 
 `Path` evaluates paths with a subclass of the JMESPath interpreter that
-reimplements the field and the index step (`visit_field`, `visit_index` in
-`mapping_parser.py`). These laws check that the reimplementation keeps the
-JMESPath meaning, and state where it deliberately departs from it: a field
-on a list reads the last element (question 1). Behaviour that runs
-JMESPath's own code (projections, pipe, filters, `@`) is listed in
-`README.md` and not tested here.
+reimplements the field, index and slice steps (`visit_field`, `visit_index`,
+`visit_slice` in `mapping_parser.py`). These laws check that the
+reimplementation keeps the JMESPath meaning, and state where it deliberately
+departs from it: a field on a list reads the last element (question 1).
+Behaviour that runs JMESPath's own code (projections, pipe, filters, `@`) is
+listed in `README.md` and not tested here.
+
+The index step is split in two laws by its domain: `test_index_step` covers
+every index except a negative one past the start of a list, which
+`test_index_past_start_is_none` states separately as a strict xfail
+(question 2). Together they state one rule: v[i] when -len(v) <= i < len(v),
+else None.
 """
 
 import pytest
@@ -15,7 +21,7 @@ from hypothesis import strategies as st
 
 from nomad_file_parser.mapping_parser import Path
 
-from .paths import PathStr
+from .paths import PathStr, Slice
 from .strategies import keys, nodes
 
 # Single steps are applied to nodes of any shape: objects, lists, leaves.
@@ -66,12 +72,65 @@ def test_index_step(node, i):
 def test_index_past_start_is_none(items, extra):
     """Path([i]).get_data(vs) = None for a list `vs` and i < -len(vs).
 
-    Fails: `visit_index` guards only the positive side in search mode and
-    pads the list, so Path([-3]).get_data([1, 2]) = 1 (and the list becomes
-    [1, 2, {}], see `test_get_does_not_mutate_source`).
+    Agreed (question 2). Fails today: `visit_index` guards only the positive
+    side in search mode and pads the list, so Path([-3]).get_data([1, 2]) = 1
+    (and the list becomes [1, 2, {}], see `test_get_does_not_mutate_source`).
     """
     i = -len(items) - extra
     assert Path(path=f'[{i}]').get_data(items) is None
+
+
+bounds = st.none() | st.integers(-7, 7)
+strides = st.sampled_from([None, 1, 2, 3, -1, -2])
+
+
+@pytest.mark.question(3)
+@pytest.mark.xfail(strict=True, reason='bounds at or beyond the ends give None')
+@given(st.lists(any_node, max_size=5), bounds, bounds, strides)
+def test_slice_step(items, start, stop, stride):
+    """Path(v[a:b:c]).get_data({v: vs}) = [x for x in vs[a:b:c] if x is not None].
+
+    Agreed (question 3): a slice selects as Python and JMESPath do, so bounds
+    beyond the ends are clamped and `[::3]` takes every third element; as a
+    projection it drops `None` elements. Fails today: `visit_slice` gives
+    None once a bound reaches the length, including a start of exactly
+    -len(vs).
+    """
+    path = f'v{Slice(start, stop, stride)}'
+    expected = [x for x in items[slice(start, stop, stride)] if x is not None]
+    assert Path(path=path).get_data({'v': items}) == expected
+
+
+@given(any_node, bounds, bounds)
+def test_slice_on_non_list_is_none(node, start, stop):
+    """Path([a:b]).get_data(v) = None when `v` is not a list."""
+    assume(not isinstance(node, list))
+    assert Path(path=str(Slice(start, stop))).get_data(node) is None
+
+
+TEN = {'v': list(range(10))}
+CLAMPED = pytest.mark.xfail(
+    strict=True, reason='bounds at or beyond the ends give None'
+)
+
+
+@pytest.mark.question(3)
+@pytest.mark.parametrize(
+    'path, expected',
+    [
+        pytest.param('v[::3]', [0, 3, 6, 9], id='every-third'),
+        pytest.param('v[1:8:3]', [1, 4, 7], id='every-third-inside'),
+        pytest.param('v[0:20:3]', [0, 3, 6, 9], id='stop-beyond-end', marks=CLAMPED),
+        pytest.param('v[-20:3]', [0, 1, 2], id='start-before-start', marks=CLAMPED),
+        pytest.param('v[-10:2]', [0, 1], id='start-at-minus-length', marks=CLAMPED),
+        pytest.param('v[8:]', [8, 9], id='to-the-end'),
+        pytest.param('v[::-4]', [9, 5, 1], id='backwards'),
+        pytest.param('v[12:]', [], id='start-beyond-end'),
+    ],
+)
+def test_pinned_slices(path, expected):
+    """Path(p).get_data({v: [0, …, 9]}) on hand-picked slices, with the agreed value per case."""
+    assert Path(path=PathStr(path)).get_data(TEN) == expected
 
 
 # A list of objects in which one element lacks the field `x`.
@@ -97,24 +156,13 @@ FIELD_ON_LIST = pytest.mark.question(1)
             id='field-on-list-in-filter-condition',
             marks=FIELD_ON_LIST,
         ),
-        pytest.param({'a': []}, 'a.x', None, id='field-on-empty-list'),
-        pytest.param({'a': [1, 2]}, 'a.x', None, id='field-on-list-of-scalars'),
-        pytest.param({'a': {}}, 'a.x', None, id='missing'),
-        pytest.param({'a': {'n': None}}, 'a.n', None, id='holds-none-like-missing'),
-        pytest.param({'a': {'b': 0}}, 'a.b.c', None, id='into-leaf-like-missing'),
         pytest.param({'a': {'e': {}}}, 'a.e', {}, id='empty-object-is-a-value'),
-        pytest.param({'a': {'z': 0}}, 'a.z', 0, id='zero-is-a-value'),
-        pytest.param({'a': {'f': False}}, 'a.f', False, id='false-is-a-value'),
-        pytest.param({'a': {'s': ''}}, 'a.s', '', id='empty-string-is-a-value'),
-        pytest.param(LISTS, 'a[*].x[0]', [], id='index-on-objects-per-element'),
-        pytest.param({'a': [1, 2]}, 'a[-1]', 2, id='negative-from-end'),
-        pytest.param({'a': [1, 2]}, 'a[-2]', 1, id='negative-first'),
-        pytest.param(LISTS, 'a[*].x.y | [-1]', 2, id='negative-after-pipe'),
-        pytest.param(
-            {'a': [[1, 2], [3]]}, 'a[*][-1]', [2, 3], id='negative-per-element'
-        ),
     ],
 )
 def test_pinned_steps(obj, path, expected):
-    """Path(p).get_data(obj) on hand-picked field and index cases, with the expected value per case."""
+    """Path(p).get_data(obj) on field cases the generators do not produce, with the expected value per case.
+
+    The field-on-list rule seen through a pipe and inside a filter
+    condition, and an empty object as a stored value.
+    """
     assert Path(path=PathStr(path)).get_data(obj) == expected

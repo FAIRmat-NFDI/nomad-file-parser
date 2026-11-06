@@ -44,7 +44,7 @@ odds = st.sampled_from([True] * 9 + [False])  # True nine times in ten
 
 @st.composite
 def walks(
-    draw, project: bool = True, project_first: bool = False
+    draw, project: bool = True, project_first: bool = False, project_from: int = 0
 ) -> tuple[Tree, list[Step]]:
     """The common generator: an object `obj` and the steps of a path p ∈ E(obj).
 
@@ -54,7 +54,7 @@ def walks(
     at an empty container, or with probability 1/10 per step, so
     Path(p).get_data(obj) is not None except where a leaf holds `None`.
     `project=False` never takes `[*]`; `project_first` always takes it at the
-    first list.
+    first list; `project_from=k` takes it only from step `k` on.
     """
     obj = draw(trees)
     steps: list[Step] = []
@@ -69,8 +69,10 @@ def walks(
             )
             steps.append(key)
             node = node[key]
-        elif project and (
-            (project_first and PROJECT not in steps) or draw(st.booleans())
+        elif (
+            project
+            and len(steps) >= project_from
+            and ((project_first and PROJECT not in steps) or draw(st.booleans()))
         ):
             steps.append(PROJECT)
             node = draw(st.sampled_from(node))
@@ -125,9 +127,12 @@ def splits(
 
     `head_project=False` keeps `[*]` out of p1 … p(n-1), so that no projection
     is open at a cut. `tail_field=True` makes p2 … pn start with a field, so
-    that each can be written as a relative child `.pi`.
+    that each can be written as a relative child `.pi`. Without projections in
+    the head, the walk takes `[*]` only after its first few steps, so that the
+    cuts are built rather than filtered.
     """
-    obj, steps = draw(perturbed(walks()))
+    project_from = 0 if head_project else draw(st.integers(2, 5))
+    obj, steps = draw(perturbed(walks(project_from=project_from)))
 
     def allowed(i: int) -> bool:
         return (head_project or PROJECT not in steps[:i]) and (

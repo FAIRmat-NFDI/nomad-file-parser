@@ -76,6 +76,10 @@ def test_prefix_is_dropped(case):
 
 
 @given(trees)
-def test_relative_at_is_current(obj):
-    """Path(.@).get_data(obj) = obj: `.@` is the relative spelling of the current node."""
-    assert Path(path=PathStr('@').relative()).get_data(obj) == obj
+def test_at_is_current(obj):
+    """Path(@).get_data(obj) = obj: `@` is the current node, the root of the object passed.
+
+    The relative `.@` gives the same, by `test_prefix_is_dropped`; parsers
+    write either.
+    """
+    assert Path(path=PathStr('@')).get_data(obj) == obj

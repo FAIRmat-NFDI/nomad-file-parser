@@ -8,17 +8,17 @@ Behaviour whose intent is unclear is pinned as it is today and asked about in [`
 
 | File | Theme | Questions |
 |---|---|---|
-| `test_steps.py` | the steps `Path` reimplements: fields (including a field on a list) and indices | 1 |
-| `test_errors.py` | malformed and out-of-range input: purity of reads, parse errors, `default` | 2, 4, 5, 6 |
+| `test_steps.py` | the steps `Path` reimplements: fields (including a field on a list), indices and slices | 1, 2, 3 |
+| `test_errors.py` | malformed, relative and out-of-range input: purity of reads, functions, `default` | 2, 4, 5, 6 |
 | `test_parent_paths.py` | relative paths `.q` under a parent path `p`, and `.@` | |
 | `test_repetition.py` | sections built from lists by nested mappers, and `indices` | 7 to 12 |
-| `test_subclasses.py` | which subclass the parser creates, and how `m_def` is resolved | 14, 15, 17, #19 |
+| `test_subclasses.py` | which subclass the parser creates, and how `m_def` is resolved | 14, 15, 17, 19 |
 | `test_passes.py` | several passes over one archive under `append`, `merge`, `replace` | 13, 16, 18 |
 | `test_machinery.py` | a check on the generator, not on the parser | |
 
 The other modules hold no laws: `paths.py` defines `PathStr` and `Tree`, `strategies.py` generates objects and paths, `support.py` measures how far a path reaches, `trees.py` and `shapes.py` provide the schemas of the mapper and subclass tests.
 
-Every test is a **law** (it holds and we agree), **pinned** (current behaviour, marked `@pytest.mark.question(n)` and waiting for an answer) or **xfail** (strict, we disagree with the current behaviour).
+Every test is a **law** (it holds and we agree), **pinned** (today's behaviour, marked `@pytest.mark.question(n)` while the question is open) or **xfail** (strict: it asserts the agreed behaviour and fails until the code does it; once fixed it passes and the mark is removed).
 The overview of all tests with their status and questions:
 
 ```bash
@@ -26,6 +26,14 @@ pytest tests/laws --questions
 ```
 
 ## Running
+
+The law tests are skipped in a plain `pytest` run, since they take longer and are meant for the end of a pull request; `--laws` runs them.
+In CI they run only in the `laws` job, which is started by hand (`workflow_dispatch` of the `install-and-test-workflow`).
+
+```bash
+pytest tests/laws --laws
+HYPOTHESIS_PROFILE=ci pytest tests/laws --laws
+```
 
 The Hypothesis profiles `dev` (25 examples, default), `ci` (200) and `big` (5000) are selected with `HYPOTHESIS_PROFILE` or `--hypothesis-profile`.
 
@@ -57,7 +65,7 @@ The mapper laws name the helpers that run the mapper: `tree(obj, outer=K, inner=
 ## Standard JMESPath behaviour (not tested here)
 
 `Path` evaluates paths with a subclass of the JMESPath interpreter that reimplements four visitor methods: `visit_field`, `visit_index`, `visit_slice` and `visit_index_expression` (`mapping_parser.py`).
-Fields and indices are therefore tested (`test_steps.py`), and slices are question 3.
+Fields, indices and slices are therefore tested (`test_steps.py`).
 Everything else runs JMESPath's own code, so the specification defines it and these tests do not repeat it.
 The laws below were tested in earlier versions of this suite and held; they are kept here as the reference for how paths compose.
 

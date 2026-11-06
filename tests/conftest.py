@@ -12,6 +12,11 @@ settings.load_profile(os.getenv('HYPOTHESIS_PROFILE', 'dev'))
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
+        '--laws',
+        action='store_true',
+        help='Run the property-based law tests in `tests/laws`, skipped by default.',
+    )
+    parser.addoption(
         '--questions',
         action='store_true',
         help='List the law tests with status and open questions instead of running them.',
@@ -20,6 +25,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
+        'markers', 'laws: a property-based law test in `tests/laws`, run with `--laws`'
+    )
+    config.addinivalue_line(
         'markers',
         'question(*refs): the test pins behaviour asked about in '
         '`tests/OPEN_QUESTIONS.md` (numbers) or in an issue (`#n`)',
@@ -27,7 +35,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def status(item: pytest.Item) -> str:
-    """`xfail` (we disagree), `pinned` (waits for an answer) or `law`."""
+    """`xfail` (agreed behaviour, not implemented yet), `pinned` (waits for an answer) or `law`."""
     if item.get_closest_marker('xfail'):
         return 'xfail'
     if item.get_closest_marker('question'):
@@ -45,12 +53,19 @@ def questions(item: pytest.Item) -> str:
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """With `--questions`, replace the run by a table of the law tests."""
+    """Skip the law tests unless `--laws` is given; with `--questions`, list them instead."""
+    laws = [item for item in items if 'laws' in item.path.parts]
+    for item in laws:
+        item.add_marker(pytest.mark.laws)
     if not config.getoption('questions'):
+        if not config.getoption('laws'):
+            skip = pytest.mark.skip(reason='law tests run with --laws')
+            for item in laws:
+                item.add_marker(skip)
         return
     rows: dict[tuple, list[str]] = {}
     for item in items:
-        if '/laws/' not in item.nodeid:
+        if 'laws' not in item.path.parts:
             continue
         function = getattr(item, 'originalname', item.name)
         doc = (item.function.__doc__ or '').strip().split('\n')[0]

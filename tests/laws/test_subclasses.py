@@ -17,8 +17,10 @@ from .shapes import (
     convert,
     elements,
     from_dict_shapes,
+    full_shape_data,
     kind_sets,
     qualified,
+    routed,
     shape_data,
     shape_values,
     summary,
@@ -60,8 +62,9 @@ def test_from_dict_keeps_type_per_element(items):
     Each element of `xs` is {m_def: X, f: v}, with `f` the field of `X` (`name` for `Shape`).
 
     Each element's type comes from its own `m_def`, so one repeating
-    subsection holds mixed subtypes in input order; elements without data
-    are dropped (question 8).
+    subsection holds mixed subtypes (polymorphism) in input order; elements
+    without data are dropped and the later ones move up (question 8), so a
+    position in the result is not a position in the input.
     """
     field = {**FIELDS, Shape: 'name'}
     source = [
@@ -75,19 +78,27 @@ def test_from_dict_keeps_type_per_element(items):
 
 
 @pytest.mark.question('#19')
-@given(kind_sets, shape_data)
-def test_sibling_subsections_share_subclasses(kinds, data):
-    """summary(convert([(k1, x)]).first) = summary(convert([(k1, x)]).second) = built(K, x).
+@pytest.mark.xfail(
+    strict=True, reason='subclass selection is not scoped to the subsection'
+)
+@given(st.permutations(KINDS), full_shape_data)
+def test_subclass_routed_to_its_subsection(kinds, data):
+    """convert([(k1, x)]).first holds only X and .second only Y when X is routed to `first`, Y to `second`.
 
-    Every annotated subclass lands in every sibling subsection of the base type.
-
-    No annotation says which subclass belongs to which of `first`, `second`
-    (FAIRmat-NFDI/nomad-file-parser#19).
+    Agreed (FAIRmat-NFDI/nomad-file-parser#19): the subsection a subclass is
+    annotated for decides where it goes, so the fields read by one key are
+    not split across sibling subsections by the subclass hierarchy. The
+    route is the subsection's `mapper_m_def` (`routed`); the subclasses' own
+    section definitions carry no annotation. Fails today: the parser does
+    not read `mapper_m_def` and builds the declared base type, so both
+    subsections stay empty.
     """
-    annotate({(kind, 'k1') for kind in kinds})
-    drawing = convert([('k1', data)])
-    assert summary(drawing.first) == built(kinds, data)
-    assert summary(drawing.second) == built(kinds, data)
+    first, second = kinds[0], kinds[1]
+    annotate({(first, 'k1'), (second, 'k1')}, sections=False)
+    with routed({'first': first, 'second': second}):
+        drawing = convert([('k1', data)])
+    assert summary(drawing.first) == built({first}, data)
+    assert summary(drawing.second) == built({second}, data)
 
 
 # m_def values that name no section of the `Shape` hierarchy.
@@ -97,17 +108,24 @@ truthy_fields = st.dictionaries(st.sampled_from(sorted(FIELDS.values())), shape_
 
 
 @pytest.mark.question(14)
+@pytest.mark.xfail(
+    strict=True, reason='an unresolvable m_def falls back to the base type'
+)
 @given(st.sampled_from(UNRESOLVABLE), st.none() | names, truthy_fields)
-def test_unresolvable_m_def_falls_back_to_base(m_def, name, fields):
-    """from_dict_shapes([{m_def: unresolvable, name: n, **fields}]) = [(Shape, {name: n})], or [] without `n`.
+def test_unresolvable_m_def_raises(m_def, name, fields):
+    """from_dict_shapes([{m_def: unresolvable, **fields}]) raises.
 
-    An element whose `m_def` names no section of the hierarchy (unknown, or a
-    section outside it) is built as the declared base type, so subclass
-    fields are lost; nothing is logged.
+    Agreed (question 14), low priority: an `m_def` that names no section of
+    the hierarchy (unknown, or a section outside it) is an error. Inside
+    NOMAD it cannot happen, since the metainfo parser writes the `m_def`
+    itself; it can when someone annotates a class that is not a NOMAD
+    section. The exception type is left to the fix. Fails today: the element
+    is built as the declared base type and subclass fields are lost
+    silently.
     """
     element = {'m_def': m_def, **fields, **({} if name is None else {'name': name})}
-    expected = [] if name is None else [('Shape', {'name': name})]
-    assert from_dict_shapes([element]) == expected
+    with pytest.raises(Exception):
+        from_dict_shapes([element])
 
 
 @pytest.mark.question(15)
@@ -115,9 +133,10 @@ def test_unresolvable_m_def_falls_back_to_base(m_def, name, fields):
 def test_element_keeps_only_fields_of_its_type(kind, name, fields):
     """from_dict_shapes([{m_def: X, **fields}]) = [(X, fields restricted to X)], or [] if none are left.
 
-    A field of another subclass is dropped without a warning (`m_set` fails
-    inside a bare `except`); if no field of `X` or of the base is left, the
-    element is dropped as empty.
+    Today's behaviour: a field of another subclass is dropped without a
+    warning (`m_set` fails inside a bare `except`); if no field of `X` or of
+    the base is left, the element is dropped as empty. It should not fail
+    silently; whether it raises or warns is open (question 15).
     """
     element = {
         'm_def': qualified(kind),
@@ -130,16 +149,19 @@ def test_element_keeps_only_fields_of_its_type(kind, name, fields):
 
 
 @pytest.mark.question(17)
+@pytest.mark.xfail(strict=True, reason='falsy values count as empty in from_dict')
 @given(
     st.sampled_from(KINDS),
     st.sampled_from([0.0, 1.0]),
     st.none() | st.sampled_from(['', 'p']),
 )
-def test_falsy_only_element_is_dropped(kind, value, name):
-    """from_dict_shapes([{m_def: X, f: v, name: n}]) = [] when every value is falsy, else the element.
+def test_falsy_values_are_data(kind, value, name):
+    """from_dict_shapes([{m_def: X, f: v, name: n}]) = [(X, {f: v, name: n})] for falsy and truthy values alike.
 
-    `0.0` and `''` count as empty in `from_dict` (`or v`), while the mapper
-    keeps them; an element with one truthy value keeps its falsy ones too.
+    Agreed (question 17): `0.0` and `''` are data, as they are for the
+    mapper (`is_not_value`), so an element holding only falsy values is kept.
+    Fails today: `from_dict` treats them as empty (`or v`) and drops the
+    element.
     """
     element = {
         'm_def': qualified(kind),
@@ -147,5 +169,4 @@ def test_falsy_only_element_is_dropped(kind, value, name):
         **({} if name is None else {'name': name}),
     }
     fields = {f: v for f, v in element.items() if f != 'm_def'}
-    expected = [(kind.__name__, fields)] if any(fields.values()) else []
-    assert from_dict_shapes([element]) == expected
+    assert from_dict_shapes([element]) == [(kind.__name__, fields)]

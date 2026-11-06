@@ -23,12 +23,28 @@ class Filter(NamedTuple):
         return f'[?{self.key}==`{json.dumps(self.value)}`]'
 
 
-Step: TypeAlias = str | int | Filter  # a field name, an index, PROJECT or a filter
+class Slice(NamedTuple):
+    """The slice step `[start:stop:step]`, which opens a projection like `[*]`."""
+
+    start: int | None
+    stop: int | None
+    step: int | None = None
+
+    def __str__(self) -> str:
+        start, stop = ('' if x is None else str(x) for x in (self.start, self.stop))
+        tail = '' if self.step is None else f':{self.step}'
+        return f'[{start}:{stop}{tail}]'
+
+
+Step: TypeAlias = (
+    str | int | Filter | Slice
+)  # a field, an index, PROJECT, a filter or a slice
 PROJECT = '*'
 
 STEP = re.compile(
     r'\.?(?:(?P<field>[A-Za-z_]\w*)|(?P<at>@)|\[(?P<index>\*|-?\d+)\]'
-    r'|\[\?(?P<key>[A-Za-z_]\w*)==`(?P<value>[^`]*)`\])'
+    r'|\[\?(?P<key>[A-Za-z_]\w*)==`(?P<value>[^`]*)`\]'
+    r'|\[(?P<start>-?\d*):(?P<stop>-?\d*)(?::(?P<step>-?\d+))?\])'
 )
 
 
@@ -61,9 +77,9 @@ class PathStr(str):
     def opens_projection(self) -> bool:
         """Whether a projection is still open at the end of the path.
 
-        A projection is opened by `[*]` or a filter and stays open up to the
-        next `|`, so it is open at the end exactly when the last segment
-        contains one of them. In JMESPath, slices, `.*` and `[]` open one too;
+        A projection is opened by `[*]`, a filter or a slice and stays open up
+        to the next `|`, so it is open at the end exactly when the last segment
+        contains one of them. In JMESPath, `.*` and `[]` open one too;
         the laws generate none of them.
         """
         return any(opens(step) for step in self.segments[-1])
@@ -93,6 +109,9 @@ class PathStr(str):
                     steps.append(int(match['index']))
                 elif match['key']:
                     steps.append(Filter(match['key'], json.loads(match['value'])))
+                elif match['start'] is not None:
+                    bounds = [match[g] for g in ('start', 'stop', 'step')]
+                    steps.append(Slice(*(int(b) if b else None for b in bounds)))
                 text = text[match.end() :]
             segments.append(steps)
         return segments
@@ -104,8 +123,8 @@ class PathStr(str):
 
 
 def opens(step: Step) -> bool:
-    """Whether `step` opens a projection: `[*]` or a filter."""
-    return step == PROJECT or isinstance(step, Filter)
+    """Whether `step` opens a projection: `[*]`, a filter or a slice."""
+    return step == PROJECT or isinstance(step, Filter | Slice)
 
 
 def render(steps: list[Step]) -> str:
@@ -114,7 +133,7 @@ def render(steps: list[Step]) -> str:
     for step in steps:
         if step == PROJECT:
             out += '[*]'
-        elif isinstance(step, Filter):
+        elif isinstance(step, Filter | Slice):
             out += str(step)
         elif isinstance(step, int):
             out += f'[{step}]'

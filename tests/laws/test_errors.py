@@ -1,14 +1,15 @@
-"""Malformed and out-of-range input: purity of reads, parse errors, `default`."""
+"""Malformed, relative and out-of-range input: purity of reads, functions, `default`."""
 
 from copy import deepcopy
 
 import pytest
 from hypothesis import example, given
+from hypothesis import strategies as st
 
 from nomad_file_parser.mapping_parser import Path
 
 from .paths import PathStr
-from .strategies import malformed, pipelines, trees
+from .strategies import malformed, pipelines, splits, trees
 
 
 @pytest.mark.question(2)
@@ -18,8 +19,9 @@ from .strategies import malformed, pipelines, trees
 def test_get_does_not_mutate_source(case):
     """obj after Path(p).get_data(obj) = obj before: reading has no effect on the object.
 
-    Fails for a negative index past the start, which `visit_index` pads in
-    search mode: Path(a[-3]).get_data({a: [1, 2]}) = 1 and leaves {a: [1, 2, {}]}.
+    Agreed (question 2). Fails for a negative index past the start, which
+    `visit_index` pads in search mode: Path(a[-3]).get_data({a: [1, 2]}) = 1
+    and leaves {a: [1, 2, {}]}.
     """
     obj, path = case
     before = deepcopy(obj)
@@ -30,37 +32,62 @@ def test_get_does_not_mutate_source(case):
 @pytest.mark.question(5)
 @given(trees)
 def test_bare_prefix_is_empty(obj):
-    """Path(.).get_data(obj) = None: a bare `.` is the prefix of the empty expression, not `@`."""
+    """Path(.).get_data(obj) = None: a bare `.` is the prefix of the empty expression, not `@`.
+
+    The current node is written `@` (`test_at_is_current`) or `.@`.
+    """
     assert Path(path='.').get_data(obj) is None
 
 
 @pytest.mark.question(4)
+@pytest.mark.xfail(
+    strict=True, reason='a relative path inside a function does not parse'
+)
 @given(pipelines())
-@example(({'a': [1, 2]}, PathStr('a')))  # length(a) is 2, length(.a) does not parse
-def test_prefix_in_function_does_not_parse(case):
-    """Path(f(.p)).get_data(obj) = None for a function `f`: a relative path does not parse in a call.
+@example(({'a': [1, 2]}, PathStr('a')))
+def test_relative_path_in_function(case):
+    """Path(not_null(.p)).get_data(obj) = Path(p).get_data(obj): a relative path in a call is evaluated.
 
-    The prefix is stripped only at the start of the path and after
-    whitespace, so inside a call it stays.
+    Agreed (question 4): `.p` inside a function call is read like `.p` on its
+    own, and its value, `None` included, is passed to the function.
+    `not_null` returns its argument unchanged, so the law isolates the
+    path; on {a: [1, 2]}, `length(.a)` is then 2. Fails today: the prefix is
+    stripped only at the start of the path, so the call does not parse and
+    the read gives `None`.
     """
     obj, path = case
-    assert Path(path=f'length({path.relative()})').get_data(obj) is None
+    assert Path(path=f'not_null({path.relative()})').get_data(obj) == Path(
+        path=path
+    ).get_data(obj)
+
+
+@pytest.mark.question(4)
+@pytest.mark.xfail(
+    strict=True, reason='a relative path inside a function does not parse'
+)
+@given(splits(head_project=False, tail_field=True))
+def test_relative_path_in_function_under_parent(case):
+    """Path(not_null(.q)) under parent `r` reads Path(r.q).get_data(obj).
+
+    Agreed (question 4): the parent is prepended inside the call as it is
+    for a relative path on its own.
+    """
+    obj, (parent, child) = case
+    path = Path(path=f'not_null({child.relative()})', parent=Path(path=parent))
+    assert path.get_data(obj) == Path(path=parent.dot(child)).get_data(obj)
 
 
 @pytest.mark.question(6)
-@given(pipelines())
-@example(({'a': {}}, PathStr('a.x')))  # missing: None, not the default
-def test_default_ignored_when_parseable(case):
-    """Path(p).get_data(obj, default=d) = Path(p).get_data(obj) when `p` parses, also when p ∉ E(obj)."""
-    obj, path = case
-    assert Path(path=path).get_data(obj, default='DEFAULT') == Path(path=path).get_data(
-        obj
-    )
+@given(st.one_of(pipelines(), malformed()))
+@example(({'a': {}}, PathStr('a.x')))  # `x` is missing: None, not the default
+def test_default_replaces_only_parse_errors(case):
+    """Path(p).get_data(obj, default=d) = d if `p` does not parse, else Path(p).get_data(obj).
 
-
-@pytest.mark.question(6)
-@given(malformed())
-def test_default_replaces_parse_errors(case):
-    """Path(p).get_data(obj, default=d) = d when `p` does not parse (a plain `str`, not a `PathStr`)."""
+    Today's behaviour: a path that parses but finds nothing gives `None`, not
+    the default. Question 6 records the two positions on whether `default`
+    should also replace a missing value. Malformed paths are plain `str`, not
+    `PathStr`.
+    """
     obj, path = case
-    assert Path(path=path).get_data(obj, default='DEFAULT') == 'DEFAULT'
+    expected = Path(path=path).get_data(obj) if isinstance(path, PathStr) else 'DEFAULT'
+    assert Path(path=path).get_data(obj, default='DEFAULT') == expected
