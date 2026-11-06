@@ -1,6 +1,6 @@
 """Repetition: sections built from lists by nested mappers, and `indices`.
 
-M_K,L(x) is the result of the tree C → S → E (`trees.py`) with `indices=K` on
+M_K,L(obj) is the result of the tree C → S → E (`trees.py`) with `indices=K` on
 `C` and `indices=L` on `S`, where `[]` requests every element as a list and
 `None` a single value; values(…) reads the `E` values as nested lists.
 """
@@ -8,7 +8,8 @@ M_K,L(x) is the result of the tree C → S → E (`trees.py`) with `indices=K` o
 import pytest
 from hypothesis import example, given
 
-from .reference import get
+from nomad_file_parser.mapping_parser import Path
+
 from .trees import (
     GAP,
     JOINED,
@@ -27,12 +28,12 @@ from .trees import (
 
 @given(dense)
 def test_nested_sections_follow_joined_path(source):
-    """values(M_[],[](x)) = eval(c[*].s[*].e)(x) when every element has a leaf.
+    """values(M_[],[](obj)) = Path(c[*].s[*].e).get_data(obj) when every element has a leaf.
 
     Nesting repeating sections composes like `.` in a path: one list level
     per section.
     """
-    assert values(tree(source)) == get(JOINED, source)
+    assert values(tree(source)) == Path(path=JOINED).get_data(source)
 
 
 @pytest.mark.question(8, 9)
@@ -40,19 +41,19 @@ def test_nested_sections_follow_joined_path(source):
 @example({'c': [{'s': [{'e': 1}]}, {'s': []}, {}]})  # empty and missing `s`
 @example({'c': []})
 def test_nested_sections_drop_empty(source):
-    """values(M_[],[](x)) = [l for l in eval(c[*].s[*].e)(x) if l != []].
+    """values(M_[],[](obj)) = [l for l in Path(c[*].s[*].e).get_data(obj) if l != []].
 
     The path drops only `None` (missing `s`) and keeps `[]` for a
     calculation without leaves; the mapper drops both (questions 8, 9).
     """
-    expected = [inner for inner in get(JOINED, source) if inner]
+    expected = [inner for inner in Path(path=JOINED).get_data(source) if inner]
     assert values(tree(source)) == expected
 
 
 @pytest.mark.question(7)
 @given(sources)
 def test_unindexed_outer_takes_first(source):
-    """M_None,[](x) = {C: c1} for the first non-empty repeat c1 of M_[],[](x).
+    """M_None,[](obj) = {C: c1} for the first non-empty repeat c1 of M_[],[](obj).
 
     Without `indices`, a section keeps only the first non-empty element of a
     list source (question 7); `{}` when there is none.
@@ -65,7 +66,7 @@ def test_unindexed_outer_takes_first(source):
 @pytest.mark.question(7)
 @given(sources)
 def test_unindexed_inner_takes_first(source):
-    """M_[],None(x)[C][i] = {S: {E: l[0]}} for each non-empty l in values(M_[],[](x)).
+    """M_[],None(obj)[C][i] = {S: {E: l[0]}} for each non-empty l in values(M_[],[](obj)).
 
     The same rule one level down: each calculation keeps its first step with
     a leaf, not a list of them.
@@ -76,7 +77,7 @@ def test_unindexed_inner_takes_first(source):
 
 @given(indexed())
 def test_indices_are_source_positions(case):
-    """values(M_K,[](x)) = [l_n for n in K if l_n != []], l_n = eval(s[*].e)(c_n).
+    """values(M_K,[](obj)) = [l_n for n in K if l_n != []], l_n = Path(s[*].e).get_data(c_n).
 
     `indices` select by position in the source, before empty elements are
     dropped, so they do not count positions of the output.
@@ -141,11 +142,11 @@ def test_mapper_pinned(specs, source, expected):
     """Current behaviour asked about in `OPEN_QUESTIONS.md` (questions 8 to 12, per case).
 
     `specs` is either the `indices` of `C` in M_K,[] or a full mapper spec;
-    `None` means M_[],[]. For `missing-vs-empty`, eval(c[*].s[*].e) keeps the
+    `None` means M_[],[]. For `missing-vs-empty`, Path(c[*].s[*].e).get_data(obj) keeps the
     middle `[]` that the mapper drops.
     """
     if specs is None:
-        assert get(JOINED, source) == [[1, 2], [], [3]]
+        assert Path(path=JOINED).get_data(source) == [[1, 2], [], [3]]
         result = tree(source)
     elif all(isinstance(i, int) for i in specs):
         result = tree(source, outer=specs)

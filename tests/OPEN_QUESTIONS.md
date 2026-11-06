@@ -84,7 +84,7 @@ Questions 13 to 18 were run on `test/pbt-path-laws` at `99ccf35`, on an unannota
 
 | # | Theme | Topic | Answer | Affected test |
 |---|---|---|---|---|
-| 1 | traversal | field on a list | | `test_path_matches_reference` (`last_on_list`) |
+| 1 | traversal | field on a list | | `test_field_on_list_reads_last`, `test_pinned_paths[field-on-list]`, `[field-after-closed-projection]` |
 | 2 | errors | negative index past the start | | `test_get_does_not_mutate_source` (strict xfail) |
 | 3 | errors | slice past the end | | slices are not generated yet |
 | 4 | errors | prefix inside a function | | `test_prefix_in_function_does_not_parse` |

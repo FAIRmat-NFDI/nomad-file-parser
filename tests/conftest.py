@@ -82,7 +82,8 @@ def pytest_terminal_summary(terminalreporter, config: pytest.Config) -> None:
         return THEMES.index(theme) if theme in THEMES else len(THEMES)
 
     for (stem, function, state, refs, doc), cases in sorted(rows.items(), key=order):
-        name = f'{function}[{", ".join(cases)}]' if split[function] > 1 else function
+        listed = ', '.join(cases) if len(cases) <= 3 else f'{len(cases)} cases'
+        name = f'{function}[{listed}]' if split[function] > 1 else function
         doc = doc.replace('|', '\\|')
         write(f'| {stem.removeprefix("test_")} | `{name}` | {state} | {refs} | {doc} |')
 

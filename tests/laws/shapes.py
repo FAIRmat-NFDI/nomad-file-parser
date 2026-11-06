@@ -10,7 +10,7 @@ from nomad.metainfo import Quantity, SubSection
 
 from nomad_file_parser.mapping_parser import MAPPING_ANNOTATION_KEY, MetainfoParser
 
-from .reference import SourceParser
+from .support import SourceParser
 
 
 class Shape(ArchiveSection):

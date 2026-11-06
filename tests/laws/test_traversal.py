@@ -1,140 +1,182 @@
-"""Traversal: how the steps of a path compose.
+"""Traversal: what one step does, and how steps compose.
 
-Pipe, dot, projection, `@`, and the absorption of a missing step.
+The step laws fix a field, an index and a projection on their own; the
+composition laws (pipe, dot, `@`, missing steps) fix how they combine, so
+together they determine every path of the fragment.
 """
-
-from copy import deepcopy
 
 import pytest
 from hypothesis import assume, event, example, given
+from hypothesis import strategies as st
 
-from .reference import depth, get, hits_projection, run
-from .strategies import (
-    PROJECT,
-    addresses,
-    at_projection,
-    is_field,
-    missing_splits,
-    perturbed,
-    pipelines,
-    render,
-    render_pipeline,
-    splits,
-)
+from nomad_file_parser.mapping_parser import Path
 
-# A list of objects in which one element lacks the field `x`.
-LISTS = {'a': [{'x': {'y': 1}}, {}, {'x': {'y': 2}}]}
+from .paths import PathStr
+from .strategies import at_projection, keys, missing_splits, nodes, paths, splits
+from .support import depth, hits_projection
 
-# Pinned cases of the traversal laws; the comment gives the value of `run`, then
-# that of `Path` where they differ.
-PINNED = [
-    (LISTS, [['a', PROJECT, 'x']]),  # [{y: 1}, {y: 2}]: drops the missing `x`
-    (LISTS, [['a', PROJECT, 'x', 'y']]),  # [1, 2]: maps the rest of the chain
-    (LISTS, [['a', PROJECT, 'x', 0]]),  # []: `[0]` per element, on objects
-    (LISTS, [['a', PROJECT, 'x'], [0]]),  # {y: 1}: `|` closes the projection
-    ({'a': [1, None, 2]}, [['a', PROJECT]]),  # [1, 2]: drops `None` elements
-    ({'a': {'x': 1}}, [['a', PROJECT]]),  # None: `[*]` on an object
-    ({'c': [[]]}, [['c', PROJECT, PROJECT, 'a']]),  # [[]]: nested keeps empty
-    (LISTS, [['a', 'x']]),  # None / {y: 2}: field on a list
-    (LISTS, [['a', PROJECT], ['x']]),  # None / {y: 2}: after a closed projection
-    ({'a': []}, [['a', 'x']]),  # None: field on an empty list
-    ({'a': [1, 2]}, [['a', 'x']]),  # None: field on a list of scalars
-    ({'a': {}}, [['a', 'x']]),  # None: missing
-    ({'a': {'n': None}}, [['a', 'n']]),  # None: holds `None`, same as missing
-    ({'a': {'b': 0}}, [['a', 'b', 'c']]),  # None: into a leaf, same as missing
-    ({'a': {'e': {}}}, [['a', 'e']]),  # {}: an empty object is a value
-    ({'a': {'z': 0}}, [['a', 'z']]),  # 0: falsy leaves are values
-    ({'a': {'f': False}}, [['a', 'f']]),  # False
-    ({'a': {'s': ''}}, [['a', 's']]),  # ''
-    ({'a': [1, 2]}, [['a', -1]]),  # 2: negative index from the end
-    ({'a': [1, 2]}, [['a', -2]]),  # 1: the first element, still in range
-    (LISTS, [['a', PROJECT, 'x', 'y'], [-1]]),  # 2: negative after `|`
-    ({'a': [[1, 2], [3]]}, [['a', PROJECT, -1]]),  # [2, 3]: per element
-]
+# Single steps are applied to nodes of any shape: objects, lists, leaves.
+any_node = st.one_of(nodes(0), nodes(1), nodes(2))
 
 
-def pinned(test):
-    """Attach every case in `PINNED` to `test` as an `@example`."""
-    for case in reversed(PINNED):
-        test = example(case)(test)
-    return test
+@given(any_node, keys)
+def test_field_step(node, k):
+    """Path(k).get_data(v) = v[k] when `v` is an object holding `k`, else None.
+
+    Lists are excluded here; a field on a list is the next law.
+    """
+    assume(not isinstance(node, list))
+    expected = node.get(k) if isinstance(node, dict) else None
+    assert Path(path=k).get_data(node) == expected
 
 
 @pytest.mark.question(1)
-@given(pipelines())
-@pinned
-def test_path_matches_reference(case):
-    """eval(p)(x) = run(p, last_on_list)(x): `Path` agrees with the reference, field-on-list rule included.
+@given(st.lists(any_node, max_size=3), keys)
+def test_field_on_list_reads_last(items, k):
+    """Path(v.k).get_data({v: vs}) = Path(k).get_data(vs[-1]) for a non-empty list `vs`, None for [].
 
-    Negative indices are included where they are in range (the walk takes
-    -len … len - 1); the perturbation inserts only non-negative off-domain
-    indices, since reading a negative one past the start mutates `x`
-    (`test_get_does_not_mutate_source`). Records depth and projection hits
-    as Hypothesis events.
+    One level only: if the last element is itself a list, the field gives
+    None. The list sits under `v` because a top-level list is not reached
+    through a field.
     """
-    source, pipeline = case
-    chain = [step for part in pipeline for step in part]
-    event(f'depth {depth(source, chain)}')
-    if hits_projection(source, chain):
-        event('projection hit')
-    expected = run(pipeline, deepcopy(source), last_on_list=True)
-    assert get(render_pipeline(pipeline), source) == expected
+    last = items[-1] if items else None
+    expected = last.get(k) if isinstance(last, dict) else None
+    assert Path(path=f'v.{k}').get_data({'v': items}) == expected
+
+
+@given(any_node, st.integers(-3, 3))
+def test_index_step(node, i):
+    """Path([i]).get_data(v) = v[i] when `v` is a list and -len(v) ≤ i < len(v), else None.
+
+    Negative indices past the start are left to `test_get_does_not_mutate_source`.
+    """
+    assume(not (isinstance(node, list) and i < -len(node)))
+    found = isinstance(node, list) and -len(node) <= i < len(node)
+    expected = node[i] if found else None
+    assert Path(path=f'[{i}]').get_data(node) == expected
+
+
+@given(any_node)
+def test_projection_step(node):
+    """Path([*]).get_data(v) = [x for x in v if x is not None] when `v` is a list, else None."""
+    expected = [x for x in node if x is not None] if isinstance(node, list) else None
+    assert Path(path='[*]').get_data(node) == expected
 
 
 @given(splits())
 def test_pipe_composes(case):
-    """eval(p | q) = eval(q) ∘ eval(p): the pipe is the crawler's nesting law, unconditionally."""
-    source, (p, q) = case
-    assert get(f'{render(p)} | {render(q)}', source) == get(
-        render(q), get(render(p), source)
+    """Path(p | q).get_data(obj) = Path(q).get_data(Path(p).get_data(obj)): the pipe nests, unconditionally.
+
+    Records depth and projection hits of the generated paths as Hypothesis
+    events.
+    """
+    obj, (p, q) = case
+    event(f'depth {depth(obj, p | q)}')
+    if hits_projection(obj, p | q):
+        event('projection hit')
+    assert Path(path=p | q).get_data(obj) == Path(path=q).get_data(
+        Path(path=p).get_data(obj)
     )
 
 
 @given(splits(head_project=False))
 def test_dot_equals_pipe_without_projection(case):
-    """eval(p ++ q) = eval(p | q) when `p` contains no `[*]`: the dot nests like the pipe."""
-    source, (p, q) = case
-    assert get(render(p + q), source) == get(f'{render(p)} | {render(q)}', source)
+    """Path(p.q).get_data(obj) = Path(p | q).get_data(obj) when `p` opens no projection: the dot nests too."""
+    obj, (p, q) = case
+    assert Path(path=p.dot(q)).get_data(obj) == Path(path=p | q).get_data(obj)
 
 
 @given(at_projection())
-@example(({'c': [[]]}, ['c'], [PROJECT, 'a']))
+@example(({'c': [[]]}, PathStr('c'), PathStr('[*].a')))
 def test_dot_maps_under_projection(case):
-    """eval(p0 ++ [*] ++ q) = mapMaybe eval(q) ∘ eval(p0) when `p0` contains no `[*]`.
+    """Path(p0[*].q).get_data(obj) = [Path(q).get_data(o) for o in Path(p0).get_data(obj)], dropping None.
 
-    The dot after a projection is the lifted step, not the step. The
-    restriction matters: if `p0` projects, the appended `[*] ++ q` is
-    captured by it and maps over the inner elements (the pinned example,
-    where eval(c[*][*].a) = [[]] but mapMaybe eval([*].a) [[]] = []).
+    When `p0` opens no projection; None when Path(p0).get_data(obj) is not a
+    list. After a projection the dot applies `q` per element. The
+    restriction matters: if `p0` projects, the appended `[*].q` is captured
+    by it and maps over the inner elements (the pinned example, where
+    Path(c[*][*].a) gives [[]] but mapping `[*].a` over [[]] gives []).
     """
-    source, p0, q = case
-    base = get(render(p0), source)
+    obj, p0, q = case
+    base = Path(path=p0).get_data(obj)
     mapped = None
     if isinstance(base, list):
-        results = (get(render(q), x) for x in base)
+        results = (Path(path=q).get_data(element) for element in base)
         mapped = [r for r in results if r is not None]
-    assert get(render(p0 + [PROJECT] + q), source) == mapped
+    assert Path(path=p0.dot('[*]').dot(q)).get_data(obj) == mapped
 
 
-@given(perturbed(addresses()))
+@given(paths())
 def test_at_is_identity(case):
-    """eval(@ | p) = eval(p) = eval(p | @), and eval(@ ++ p) = eval(p) when `p` starts with a field.
+    """Path(@ | p).get_data(obj) = Path(p).get_data(obj) = Path(p | @).get_data(obj), and the same for @.p.
 
-    `@` is the neutral element of the pipe on both sides and of the dot on
-    the left only: `p.@` is not valid JMESPath. Relative, eval(.@) = eval(@).
+    The last when `p` starts with a field. `@` is the neutral element of the
+    pipe on both sides and of the dot on the left only: `p.@` is not valid
+    JMESPath, and `@.[*]` is a multi-select. Relative,
+    Path(.@).get_data(obj) = obj.
     """
-    source, p = case
-    path = render(p)
-    assert get('.@', source) == source
-    assert get(f'@ | {path}', source) == get(path, source)
-    assert get(f'{path} | @', source) == get(path, source)
-    if is_field(p[0]):  # '@.[*]' is a multi-select, '@.[0]' does not parse
-        assert get(f'@.{path}', source) == get(path, source)
+    obj, p = case
+    at = PathStr('@')
+    expected = Path(path=p).get_data(obj)
+    assert Path(path=at.relative()).get_data(obj) == obj
+    assert Path(path=at | p).get_data(obj) == expected
+    assert Path(path=p | at).get_data(obj) == expected
+    if p.starts_with_field():
+        assert Path(path=at.dot(p)).get_data(obj) == expected
 
 
 @given(missing_splits())
 def test_missing_absorbs(case):
-    """eval(p)(x) = None ⇒ eval(p ++ q)(x) = None: E(x) is prefix-closed."""
-    source, (p, q) = case
-    assume(get(render(p), source) is None)
-    assert get(render(p + q), source) is None
+    """Path(p).get_data(obj) = None ⇒ Path(p.q).get_data(obj) = None: E(obj) is prefix-closed."""
+    obj, (p, q) = case
+    assume(Path(path=p).get_data(obj) is None)
+    assert Path(path=p.dot(q)).get_data(obj) is None
+
+
+# A list of objects in which one element lacks the field `x`.
+LISTS = {'a': [{'x': {'y': 1}}, {}, {'x': {'y': 2}}]}
+FIELD_ON_LIST = pytest.mark.question(1)
+
+
+@pytest.mark.parametrize(
+    'obj, path, expected',
+    [
+        pytest.param(
+            LISTS, 'a[*].x', [{'y': 1}, {'y': 2}], id='projection-drops-missing'
+        ),
+        pytest.param(LISTS, 'a[*].x.y', [1, 2], id='projection-maps-rest'),
+        pytest.param(LISTS, 'a[*].x[0]', [], id='index-per-element-on-objects'),
+        pytest.param(LISTS, 'a[*].x | [0]', {'y': 1}, id='pipe-closes-projection'),
+        pytest.param({'a': [1, None, 2]}, 'a[*]', [1, 2], id='projection-drops-none'),
+        pytest.param({'a': {'x': 1}}, 'a[*]', None, id='projection-on-object'),
+        pytest.param(
+            {'c': [[]]}, 'c[*][*].a', [[]], id='nested-projection-keeps-empty'
+        ),
+        pytest.param(LISTS, 'a.x', {'y': 2}, id='field-on-list', marks=FIELD_ON_LIST),
+        pytest.param(
+            LISTS,
+            'a[*] | x',
+            {'y': 2},
+            id='field-after-closed-projection',
+            marks=FIELD_ON_LIST,
+        ),
+        pytest.param({'a': []}, 'a.x', None, id='field-on-empty-list'),
+        pytest.param({'a': [1, 2]}, 'a.x', None, id='field-on-list-of-scalars'),
+        pytest.param({'a': {}}, 'a.x', None, id='missing'),
+        pytest.param({'a': {'n': None}}, 'a.n', None, id='holds-none-like-missing'),
+        pytest.param({'a': {'b': 0}}, 'a.b.c', None, id='into-leaf-like-missing'),
+        pytest.param({'a': {'e': {}}}, 'a.e', {}, id='empty-object-is-a-value'),
+        pytest.param({'a': {'z': 0}}, 'a.z', 0, id='zero-is-a-value'),
+        pytest.param({'a': {'f': False}}, 'a.f', False, id='false-is-a-value'),
+        pytest.param({'a': {'s': ''}}, 'a.s', '', id='empty-string-is-a-value'),
+        pytest.param({'a': [1, 2]}, 'a[-1]', 2, id='negative-from-end'),
+        pytest.param({'a': [1, 2]}, 'a[-2]', 1, id='negative-first'),
+        pytest.param(LISTS, 'a[*].x.y | [-1]', 2, id='negative-after-pipe'),
+        pytest.param(
+            {'a': [[1, 2], [3]]}, 'a[*][-1]', [2, 3], id='negative-per-element'
+        ),
+    ],
+)
+def test_pinned_paths(obj, path, expected):
+    """Path(p).get_data(obj) on hand-picked cases, with the expected value per case."""
+    assert Path(path=PathStr(path)).get_data(obj) == expected

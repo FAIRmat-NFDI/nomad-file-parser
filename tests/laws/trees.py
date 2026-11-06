@@ -5,11 +5,12 @@ from typing import Any
 
 from hypothesis import strategies as st
 
-from nomad_file_parser.mapping_parser import Mapper
+from nomad_file_parser.mapping_parser import Mapper, Path
 
-from .reference import SourceParser, get
+from .paths import PathStr
+from .support import SourceParser
 
-JOINED = 'c[*].s[*].e'
+JOINED = PathStr('c[*].s[*].e')
 
 # SCF steps: with a leaf `e`, or without one.
 steps = st.one_of(st.integers(-2, 2).map(lambda e: {'e': e}), st.just({'x': 0}))
@@ -40,7 +41,7 @@ def run_mapper(specs: list[dict[str, Any]], source: dict[str, Any]) -> dict[str,
 
 
 def tree(source, outer: list[int] | None = [], inner: list[int] | None = []):
-    """M_K,L(x) with K = `outer` and L = `inner`."""
+    """M_K,L(obj) with K = `outer` and L = `inner`."""
     leaf = dict(target='E', path='.e')
     specs = [section('C', 'c', [section('S', '.s', [leaf], inner)], outer)]
     return run_mapper(specs, source)
@@ -52,8 +53,8 @@ def values(result: dict[str, Any]) -> list[list[Any]]:
 
 
 def per_element(source: dict[str, Any]) -> list[list[Any]]:
-    """eval(s[*].e) on each calculation by source position, `[]` where it fails."""
-    return [get('s[*].e', c) or [] for c in source['c']]
+    """Path(s[*].e).get_data(c) for each calculation c by source position, `[]` where it fails."""
+    return [Path(path='s[*].e').get_data(c) or [] for c in source['c']]
 
 
 @st.composite
