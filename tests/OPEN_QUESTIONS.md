@@ -149,7 +149,7 @@ Questions 13 to 18 were run on `test/pbt-path-laws` at `99ccf35`, on an unannota
 19. **Sibling subsections of the same base type share every annotated subclass** (FAIRmat-NFDI/nomad-file-parser#19).
    Subclass selection scans the base type's subclasses for an annotation under the key, with no notion of the destination subsection, so every annotated subclass lands in every sibling subsection, and fields read under one key are split across them by the subclass hierarchy.
 
-   **Answer:** a defect. The subsection a subclass is routed to decides where it goes (`test_subclass_routed_to_its_subsection`, strict xfail, routing through the subsection's `mapper_m_def`).
+   **Answer:** a defect: the subsection a subclass is annotated for should decide where it goes. How a schema declares that route is open and discussed in #19; it has to be scoped by annotation key, since the unscoped slot `more['mapper_m_def']` on the shared subsection definition let one parser redirect another and is no longer read.
 
 ## Answers
 
@@ -175,4 +175,4 @@ Questions 13 to 18 were run on `test/pbt-path-laws` at `99ccf35`, on an unannota
 | 16 | passes | scalar update modes | | `test_scalar_passes_overwrite` |
 | 17 | subclasses | falsy-only subsections | defect: falsy values are data | `test_falsy_values_are_data` (strict xfail) |
 | 18 | passes | misaligned element reuse | | `test_append_pass_reuses_misaligned_element` (strict xfail) |
-| 19 | subclasses | sibling subsections | defect: route by subsection | `test_subclass_routed_to_its_subsection` (strict xfail) |
+| 19 | subclasses | sibling subsections | defect; route API open (#19) | `test_sibling_subsections_share_subclasses` |

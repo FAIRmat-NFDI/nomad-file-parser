@@ -17,10 +17,8 @@ from .shapes import (
     convert,
     elements,
     from_dict_shapes,
-    full_shape_data,
     kind_sets,
     qualified,
-    routed,
     shape_data,
     shape_values,
     summary,
@@ -77,28 +75,21 @@ def test_from_dict_keeps_type_per_element(items):
     assert summary(target.data_object.shapes) == expected
 
 
-@pytest.mark.question('#19')
-@pytest.mark.xfail(
-    strict=True, reason='subclass selection is not scoped to the subsection'
-)
-@given(st.permutations(KINDS), full_shape_data)
-def test_subclass_routed_to_its_subsection(kinds, data):
-    """convert([(k1, x)]).first holds only X and .second only Y when X is routed to `first`, Y to `second`.
+@pytest.mark.question(19)
+@given(kind_sets, shape_data)
+def test_sibling_subsections_share_subclasses(kinds, data):
+    """summary(convert([(k1, x)]).first) = summary(convert([(k1, x)]).second) = built(K, x).
 
-    Agreed (FAIRmat-NFDI/nomad-file-parser#19): the subsection a subclass is
-    annotated for decides where it goes, so the fields read by one key are
-    not split across sibling subsections by the subclass hierarchy. The
-    route is the subsection's `mapper_m_def` (`routed`); the subclasses' own
-    section definitions carry no annotation. Fails today: the parser does
-    not read `mapper_m_def` and builds the declared base type, so both
-    subsections stay empty.
+    Today's behaviour: every subclass annotated under the key lands in every
+    sibling subsection of the base type, since no annotation says which
+    subclass belongs to which of `first`, `second`. Agreed to be a defect;
+    how a schema should declare the route is open
+    (FAIRmat-NFDI/nomad-file-parser#19, question 19).
     """
-    first, second = kinds[0], kinds[1]
-    annotate({(first, 'k1'), (second, 'k1')}, sections=False)
-    with routed({'first': first, 'second': second}):
-        drawing = convert([('k1', data)])
-    assert summary(drawing.first) == built({first}, data)
-    assert summary(drawing.second) == built({second}, data)
+    annotate({(kind, 'k1') for kind in kinds})
+    drawing = convert([('k1', data)])
+    assert summary(drawing.first) == built(kinds, data)
+    assert summary(drawing.second) == built(kinds, data)
 
 
 # m_def values that name no section of the `Shape` hierarchy.

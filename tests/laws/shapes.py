@@ -1,7 +1,5 @@
 """The `Shape` hierarchy under `Drawing`, and how the laws annotate and convert it."""
 
-from collections.abc import Iterator
-from contextlib import contextmanager
 from copy import deepcopy
 from typing import Any
 
@@ -52,18 +50,11 @@ KINDS = list(FIELDS)
 SHAPE_KEYS = ('k1', 'k2')
 
 
-def annotate(
-    layout: set[tuple[type, str]],
-    update_mode: str | None = None,
-    sections: bool = True,
-) -> None:
+def annotate(layout: set[tuple[type, str]], update_mode: str | None = None) -> None:
     """(Re)write the annotations: (X, k) in `layout` maps subclass X under key k.
 
     `Drawing` and its `title` are mapped under every key; a mapped subclass
-    reads its section from `.@` and its field from `.<field>`. With
-    `sections=False` only the fields are annotated, not the subclass's own
-    section definition, so the subclass is not selected by the scan of the
-    base type's subclasses.
+    reads its section from `.@` and its field from `.<field>`.
     """
     options = {} if update_mode is None else {'update_mode': update_mode}
     Drawing.m_def.m_annotations[MAPPING_ANNOTATION_KEY] = {
@@ -75,8 +66,7 @@ def annotate(
     for kind, field in FIELDS.items():
         keys = [k for x, k in layout if x is kind]
         kind.m_def.m_annotations[MAPPING_ANNOTATION_KEY] = {
-            k: MapperAnnotation(mapper='.@', **options)
-            for k in (keys if sections else [])
+            k: MapperAnnotation(mapper='.@', **options) for k in keys
         }
         getattr(kind, field).m_annotations[MAPPING_ANNOTATION_KEY] = {
             k: MapperAnnotation(mapper=f'.{field}') for k in keys
@@ -136,26 +126,3 @@ def from_dict_shapes(elements: list[dict]) -> list[tuple[str, dict]]:
     target = MetainfoParser(data_object=Drawing())
     target.from_dict({'shapes': elements})
     return summary(target.data_object.shapes)
-
-
-@contextmanager
-def routed(routes: dict[str, type], key: str = 'k1') -> Iterator[None]:
-    """Route subclass X to the subsection of `Drawing` named for it, under `key`.
-
-    The subsection gets a mapping annotation reading `.@` and the slot
-    `more['mapper_m_def']`, which the simulation parsers' helper
-    `add_mapping_annotation(subsection, key, mapper, m_def=X)` writes. Both
-    are removed afterwards, so other laws see unannotated subsections.
-    """
-    subsections = [getattr(Drawing, name) for name in routes]
-    try:
-        for subsection, kind in zip(subsections, routes.values()):
-            subsection.m_annotations[MAPPING_ANNOTATION_KEY] = {
-                key: MapperAnnotation(mapper='.@')
-            }
-            subsection.more['mapper_m_def'] = qualified(kind)
-        yield
-    finally:
-        for subsection in subsections:
-            subsection.m_annotations.pop(MAPPING_ANNOTATION_KEY, None)
-            subsection.more.pop('mapper_m_def', None)
