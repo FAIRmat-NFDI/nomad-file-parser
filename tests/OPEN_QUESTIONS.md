@@ -1,6 +1,6 @@
 # Open questions on path semantics
 
-Behaviours found while writing `tests/test_path_laws.py` where it is not clear whether they are intended.
+Behaviours found while writing the law tests in `tests/laws/` where it is not clear whether they are intended.
 Each answer decides whether the matching test pins current behaviour as a law or becomes a strict xfail.
 All examples were run on `develop` at `97b4d54`.
 
@@ -80,23 +80,25 @@ Questions 13 to 18 were run on `test/pbt-path-laws` at `99ccf35`, on an unannota
 
 ## Answers
 
-| # | Topic | Answer | Affected test |
-|---|---|---|---|
-| 1 | field on a list | | `test_interpreter_matches_path` (`last_on_list`) |
-| 2 | negative index past the start | | `test_get_does_not_mutate_source` |
-| 3 | slice past the end | | slices are not generated yet |
-| 4 | prefix inside a function | | `test_prefix_in_function_does_not_parse` |
-| 5 | bare `.` | | `test_bare_prefix_is_empty` |
-| 6 | `default=` | | `test_default_ignored_when_parseable`, `test_default_replaces_parse_errors` |
-| 7 | list source without `indices` | | `test_unindexed_outer_takes_first`, `test_unindexed_inner_takes_first` |
-| 8 | dropped positions | | `test_nested_sections_drop_empty`, `test_mapper_pinned[indices-select-empty]` |
-| 9 | nested sections vs joined path | | `test_nested_sections_follow_joined_path`, `test_mapper_pinned[missing-vs-empty]` |
-| 10 | projection in a source path | | `test_mapper_pinned[source-double-projection]`, `test_mapper_pinned[source-projection-of-lists]` |
-| 11 | `indices=[]` as "all" | | `test_mapper_pinned[indices-order-ignored]`, `test_mapper_pinned[indices-duplicate]` |
-| 12 | negative `indices` | | `test_mapper_pinned[indices-negative]`, `test_mapper_pinned[indices-out-of-range]` |
-| 13 | merge across subclasses | | `test_merge_across_subclasses_keeps_first` |
-| 14 | unresolvable `m_def` | | `test_from_dict_pinned[unknown-m-def-base-field]`, `[unknown-m-def-subclass-field]`, `[m-def-outside-hierarchy]` |
-| 15 | field of another subclass | | `test_from_dict_pinned[field-of-other-subclass]` |
-| 16 | scalar update modes | | `test_scalar_passes_overwrite` |
-| 17 | falsy-only subsections | | `test_from_dict_pinned[falsy-only-subsection]` |
-| 18 | misaligned element reuse | | `test_append_pass_reuses_misaligned_element` (strict xfail) |
+`pytest tests/laws --questions` lists the same tests with their current status.
+
+| # | Theme | Topic | Answer | Affected test |
+|---|---|---|---|---|
+| 1 | traversal | field on a list | | `test_path_matches_reference` (`last_on_list`) |
+| 2 | errors | negative index past the start | | `test_get_does_not_mutate_source` (strict xfail) |
+| 3 | errors | slice past the end | | slices are not generated yet |
+| 4 | errors | prefix inside a function | | `test_prefix_in_function_does_not_parse` |
+| 5 | errors | bare `.` | | `test_bare_prefix_is_empty` |
+| 6 | errors | `default=` | | `test_default_ignored_when_parseable`, `test_default_replaces_parse_errors` |
+| 7 | repetition | list source without `indices` | | `test_unindexed_outer_takes_first`, `test_unindexed_inner_takes_first` |
+| 8 | repetition | dropped positions | | `test_nested_sections_drop_empty`, `test_mapper_pinned[indices-select-empty]` |
+| 9 | repetition | nested sections vs joined path | | `test_nested_sections_drop_empty`, `test_mapper_pinned[missing-vs-empty]` |
+| 10 | repetition | projection in a source path | | `test_mapper_pinned[source-double-projection]`, `test_mapper_pinned[source-projection-of-lists]` |
+| 11 | repetition | `indices=[]` as "all" | | `test_mapper_pinned[indices-order-ignored]`, `test_mapper_pinned[indices-duplicate]` |
+| 12 | repetition | negative `indices` | | `test_mapper_pinned[indices-negative]`, `test_mapper_pinned[indices-out-of-range]` |
+| 13 | passes | merge across subclasses | | `test_merge_across_subclasses_keeps_first` |
+| 14 | subclasses | unresolvable `m_def` | | `test_from_dict_pinned[unknown-m-def-base-field]`, `[unknown-m-def-subclass-field]`, `[m-def-outside-hierarchy]` |
+| 15 | subclasses | field of another subclass | | `test_from_dict_pinned[field-of-other-subclass]` |
+| 16 | passes | scalar update modes | | `test_scalar_passes_overwrite` |
+| 17 | subclasses | falsy-only subsections | | `test_from_dict_pinned[falsy-only-subsection]` |
+| 18 | passes | misaligned element reuse | | `test_append_pass_reuses_misaligned_element` (strict xfail) |
