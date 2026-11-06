@@ -1,20 +1,20 @@
 # Laws of the mapping parser
 
-These property-based tests state the behaviour of the mapping parser as laws: equations that must hold for every generated source and path.
+These property-based tests state the behaviour of the mapping parser as laws: equations that must hold for every generated object and path.
+Behaviour that the JMESPath specification already defines and that `Path` leaves to JMESPath's own code is not tested; it is listed under [Standard JMESPath behaviour](#standard-jmespath-behaviour-not-tested-here).
 Behaviour whose intent is unclear is pinned as it is today and asked about in [`../OPEN_QUESTIONS.md`](../OPEN_QUESTIONS.md); behaviour we consider wrong is a strict `xfail`.
 
 ## Themes
 
 | File | Theme | Questions |
 |---|---|---|
-| `test_traversal.py` | what one step does, and how steps compose: pipe, dot, projection, `@`, missing steps | 1 |
-| `test_filters.py` | filters `[?k==v]`: which elements they select, and the projection they open and `\|` closes | 1 |
+| `test_steps.py` | the steps `Path` reimplements: fields (including a field on a list) and indices | 1 |
 | `test_errors.py` | malformed and out-of-range input: purity of reads, parse errors, `default` | 2, 4, 5, 6 |
-| `test_parent_paths.py` | relative paths `.q` under a parent path `p` | |
+| `test_parent_paths.py` | relative paths `.q` under a parent path `p`, and `.@` | |
 | `test_repetition.py` | sections built from lists by nested mappers, and `indices` | 7 to 12 |
 | `test_subclasses.py` | which subclass the parser creates, and how `m_def` is resolved | 14, 15, 17, #19 |
 | `test_passes.py` | several passes over one archive under `append`, `merge`, `replace` | 13, 16, 18 |
-| `test_machinery.py` | checks on the generators, not on the parser | |
+| `test_machinery.py` | a check on the generator, not on the parser | |
 
 The other modules hold no laws: `paths.py` defines `PathStr` and `Tree`, `strategies.py` generates objects and paths, `support.py` measures how far a path reaches, `trees.py` and `shapes.py` provide the schemas of the mapper and subclass tests.
 
@@ -43,7 +43,6 @@ Pinned cases are listed with their expected value per case.
 | `None` | also the failure value: a path that cannot be followed gives `None`, so a stored `None` and a missing path read the same |
 | `p`, `q`, `r` | paths, written as `PathStr`: segments joined by `\|`, each one steps joined by `.` (`p0` a path that opens no projection) |
 | `k`, `[i]`, `[*]`, `[?k==v]` | a field step, an index step, the list projection, a filter; the bracketed steps attach without a dot (`p[0]`) |
-| `f` | a filter step `[?k==v]`; `same(a, b)` compares as the filter does, by type and value |
 | `p.q` | the dot: `q` continues the segment of `p`, inside an open projection |
 | `p \| q` | the pipe: `q` is applied to the whole value of `p` |
 | `@`, `.p` | the current node; `p` relative to a parent path |
@@ -55,12 +54,38 @@ Pinned cases are listed with their expected value per case.
 
 The repetition laws add `M_K,L(obj)` for the result of the mapper tree `C` → `S` → `E` with `indices=K` on `C` and `indices=L` on `S`, and `values(…)` for its `E` values as nested lists (see the module docstring of `test_repetition.py`).
 
-## How the laws fix the behaviour
+## Standard JMESPath behaviour (not tested here)
 
-The step laws in `test_traversal.py` state what one field, index and projection step does on any node.
-The composition laws state how steps combine: the pipe always nests, the dot nests while no projection is open and maps per element after one, `@` is neutral, and a missing step makes every extension missing.
-Together they determine the value of every path of the fragment, so no separate model of the parser is needed.
-`E(obj)` is prefix-closed (if `p.q ∈ E(obj)`, then `p ∈ E(obj)`), so it is a tree domain whose leaves are the paths that cannot be extended.
+`Path` evaluates paths with a subclass of the JMESPath interpreter that reimplements four visitor methods: `visit_field`, `visit_index`, `visit_slice` and `visit_index_expression` (`mapping_parser.py`).
+Fields and indices are therefore tested (`test_steps.py`), and slices are question 3.
+Everything else runs JMESPath's own code, so the specification defines it and these tests do not repeat it.
+The laws below were tested in earlier versions of this suite and held; they are kept here as the reference for how paths compose.
+
+| Law | Meaning |
+|---|---|
+| `Path([*]).get_data(v) = [x for x in v if x is not None]` when `v` is a list, else `None` | a projection collects the elements and drops `None` |
+| `Path(p \| q).get_data(obj) = Path(q).get_data(Path(p).get_data(obj))` | the pipe nests, unconditionally |
+| `Path(p.q).get_data(obj) = Path(p \| q).get_data(obj)` when `p` opens no projection | the dot nests like the pipe while no projection is open |
+| `Path(p0[*].q).get_data(obj) = [r for o in Path(p0).get_data(obj) if (r := Path(q).get_data(o)) is not None]` when `p0` opens no projection | after a projection the dot applies `q` per element |
+| `Path(@ \| p).get_data(obj) = Path(p).get_data(obj) = Path(p \| @).get_data(obj)`, and the same for `@.p` when `p` starts with a field | `@` is neutral; `p.@` is not valid, `@.[*]` is a multi-select |
+| `Path(p).get_data(obj) = None ⇒ Path(p.q).get_data(obj) = None` | a missing step makes every extension missing, so `E(obj)` is prefix-closed |
+| `Path(vs[?k==v]).get_data(obj) = [o for o in vs if o is not None and same(Path(k).get_data(o), v)]`, `None` on a non-list | a filter selects elements, compares by type and value (`1` is not `true`), and a missing key matches `null` |
+| `Path(p0[?f].q)` and `Path(p0[?f] \| q)` as for `[*]` | a filter opens a projection like `[*]`, and `\|` closes it |
+
+A projection opened by `[*]` or a filter stays open up to the next `|` (`PathStr.opens_projection`).
+With `p0` projecting, a further `[*]` nests inside it: on `{c: [[{}]]}`, `c[*][*].a` gives `[[]]`, while mapping `a` over the value of `c[*]` gives `[]`.
+The parsers rely on the pipe to close a filter, as in `vasp.py`: on the elements `{"@name": "program", "__value": "VASP"}`, `{"@name": "version", …}` and `{"@name": "program", "__value": "other"}` under `i`:
+
+| Path | Value |
+|---|---|
+| `i[?"@name"=='program']` | both `program` elements |
+| `i[?"@name"=='program'][0]` | `[]`, since `[0]` is applied to each match |
+| `i[?"@name"=='program'] \| [0]` | the first `program` element |
+| `i[?"@name"=='program'] \| [0].__value` | `'VASP'` |
+| `i[?"@name"=='program'].__value \| [0]` | `'VASP'` |
+| `i[?"@name"=='none'] \| [0]` | `None` |
+
+The field rule of `Path` also applies inside a filter condition, so `v[?a==`1`]` selects an element `[{'a': 1}]` (question 1, pinned in `test_steps.py`).
 
 ## Paths in the code
 

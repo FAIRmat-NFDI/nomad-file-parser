@@ -5,7 +5,7 @@ from hypothesis import given
 from nomad_file_parser.mapping_parser import Path
 
 from .paths import PathStr
-from .strategies import at_projection, pipelines, splits
+from .strategies import at_projection, pipelines, splits, trees
 
 
 def inherit(parent: PathStr, child: PathStr) -> Path:
@@ -73,3 +73,9 @@ def test_prefix_is_dropped(case):
     """Path(.p).get_data(obj) = Path(p).get_data(obj): on its own, the leading `.` only marks `p` as relative."""
     obj, path = case
     assert Path(path=path.relative()).get_data(obj) == Path(path=path).get_data(obj)
+
+
+@given(trees)
+def test_relative_at_is_current(obj):
+    """Path(.@).get_data(obj) = obj: `.@` is the relative spelling of the current node."""
+    assert Path(path=PathStr('@').relative()).get_data(obj) == obj
