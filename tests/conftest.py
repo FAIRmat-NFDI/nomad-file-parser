@@ -64,7 +64,15 @@ def pytest_collection_modifyitems(
 
 ROWS = pytest.StashKey[dict]()
 # Presentation order of the theme files in `tests/laws`.
-THEMES = ['traversal', 'errors', 'parent_paths', 'repetition', 'subclasses', 'passes']
+THEMES = [
+    'traversal',
+    'filters',
+    'errors',
+    'parent_paths',
+    'repetition',
+    'subclasses',
+    'passes',
+]
 
 
 def pytest_terminal_summary(terminalreporter, config: pytest.Config) -> None:

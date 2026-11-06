@@ -7,7 +7,9 @@ generators build paths as step lists and hand them to the tests as `PathStr`.
 from hypothesis import assume
 from hypothesis import strategies as st
 
-from .paths import PROJECT, PathStr, Step, Tree, render
+from nomad_file_parser.mapping_parser import Path
+
+from .paths import PROJECT, Filter, PathStr, Step, Tree, render
 
 # Field names: three, so that sibling objects share keys.
 keys = st.sampled_from(['a', 'b', 'c'])
@@ -190,3 +192,33 @@ def malformed(draw) -> tuple[Tree, str]:
     """Wrangler: a perturbed path rendered as `p..k`, a plain `str` that does not parse."""
     obj, steps = draw(perturbed(walks()))
     return obj, f'{render(steps)}..{draw(keys)}'
+
+
+@st.composite
+def at_filter(draw) -> tuple[Tree, PathStr, Filter, list[Step]]:
+    """Wrangler: a perturbed walk cut as p0[?k==v].q at its first `[*]`, which becomes a filter.
+
+    `p0` opens no projection; `q` may be empty. In half the cases the key and
+    value come from an element of the list at `p0`, so that the filter
+    matches some elements; otherwise they are drawn freely.
+    """
+    obj, steps = draw(perturbed(walks(project_first=True)))
+    assume(PROJECT in steps)
+    i = steps.index(PROJECT)
+    p0 = PathStr.from_steps(steps[:i])
+    elements = Path(path=p0).get_data(obj)
+    pairs = sorted(
+        {
+            (k, v)
+            for e in (elements if isinstance(elements, list) else [])
+            if isinstance(e, dict)
+            for k, v in e.items()
+            if not isinstance(v, dict | list)
+        },
+        key=repr,
+    )
+    if pairs and draw(st.booleans()):
+        key, value = draw(st.sampled_from(pairs))
+    else:
+        key, value = draw(keys), draw(leaves)
+    return obj, p0, Filter(key, value), steps[i + 1 :]

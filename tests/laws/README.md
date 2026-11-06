@@ -8,12 +8,13 @@ Behaviour whose intent is unclear is pinned as it is today and asked about in [`
 | File | Theme | Questions |
 |---|---|---|
 | `test_traversal.py` | what one step does, and how steps compose: pipe, dot, projection, `@`, missing steps | 1 |
+| `test_filters.py` | filters `[?k==v]`: which elements they select, and the projection they open and `\|` closes | 1 |
 | `test_errors.py` | malformed and out-of-range input: purity of reads, parse errors, `default` | 2, 4, 5, 6 |
 | `test_parent_paths.py` | relative paths `.q` under a parent path `p` | |
 | `test_repetition.py` | sections built from lists by nested mappers, and `indices` | 7 to 12 |
 | `test_subclasses.py` | which subclass the parser creates, and how `m_def` is resolved | 14, 15, 17, #19 |
 | `test_passes.py` | several passes over one archive under `append`, `merge`, `replace` | 13, 16, 18 |
-| `test_machinery.py` | a check on the generator, not on the parser | |
+| `test_machinery.py` | checks on the generators, not on the parser | |
 
 The other modules hold no laws: `paths.py` defines `PathStr` and `Tree`, `strategies.py` generates objects and paths, `support.py` measures how far a path reaches, `trees.py` and `shapes.py` provide the schemas of the mapper and subclass tests.
 
@@ -41,7 +42,8 @@ Pinned cases are listed with their expected value per case.
 | `obj`, `v`, `vs` | a tree, a node in it, a list node |
 | `None` | also the failure value: a path that cannot be followed gives `None`, so a stored `None` and a missing path read the same |
 | `p`, `q`, `r` | paths, written as `PathStr`: segments joined by `\|`, each one steps joined by `.` (`p0` a path that opens no projection) |
-| `k`, `[i]`, `[*]` | a field step, an index step, the list projection; index and projection steps attach without a dot (`p[0]`) |
+| `k`, `[i]`, `[*]`, `[?k==v]` | a field step, an index step, the list projection, a filter; the bracketed steps attach without a dot (`p[0]`) |
+| `f` | a filter step `[?k==v]`; `same(a, b)` compares as the filter does, by type and value |
 | `p.q` | the dot: `q` continues the segment of `p`, inside an open projection |
 | `p \| q` | the pipe: `q` is applied to the whole value of `p` |
 | `@`, `.p` | the current node; `p` relative to a parent path |

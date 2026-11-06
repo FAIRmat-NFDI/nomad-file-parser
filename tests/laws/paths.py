@@ -1,8 +1,9 @@
 """Paths as formatted strings, and the trees they are evaluated on."""
 
+import json
 import re
 from functools import cached_property
-from typing import TypeAlias
+from typing import NamedTuple, TypeAlias
 
 from nomad_file_parser.mapping_parser import JmespathParser
 
@@ -11,10 +12,24 @@ from nomad_file_parser.mapping_parser import JmespathParser
 Leaf: TypeAlias = bool | int | float | str | None
 Tree: TypeAlias = dict[str, 'Tree'] | list['Tree'] | Leaf
 
-Step: TypeAlias = str | int  # a field name, an index, or PROJECT
+
+class Filter(NamedTuple):
+    """The filter step `[?key==`value`]`, which opens a projection like `[*]`."""
+
+    key: str
+    value: Leaf
+
+    def __str__(self) -> str:
+        return f'[?{self.key}==`{json.dumps(self.value)}`]'
+
+
+Step: TypeAlias = str | int | Filter  # a field name, an index, PROJECT or a filter
 PROJECT = '*'
 
-STEP = re.compile(r'\.?(?:(?P<field>[A-Za-z_]\w*)|(?P<at>@)|\[(?P<index>\*|-?\d+)\])')
+STEP = re.compile(
+    r'\.?(?:(?P<field>[A-Za-z_]\w*)|(?P<at>@)|\[(?P<index>\*|-?\d+)\]'
+    r'|\[\?(?P<key>[A-Za-z_]\w*)==`(?P<value>[^`]*)`\])'
+)
 
 
 class PathStr(str):
@@ -46,12 +61,12 @@ class PathStr(str):
     def opens_projection(self) -> bool:
         """Whether a projection is still open at the end of the path.
 
-        A projection is opened by `[*]` and stays open up to the next `|`, so
-        it is open at the end exactly when the last segment contains `[*]`.
-        In JMESPath, slices, filters, `.*` and `[]` open one too; the laws
-        generate none of them.
+        A projection is opened by `[*]` or a filter and stays open up to the
+        next `|`, so it is open at the end exactly when the last segment
+        contains one of them. In JMESPath, slices, `.*` and `[]` open one too;
+        the laws generate none of them.
         """
-        return PROJECT in self.segments[-1]
+        return any(opens(step) for step in self.segments[-1])
 
     def starts_with_field(self) -> bool:
         """Whether the first step is a field, so that `@.p` and `p0.p` are valid."""
@@ -59,9 +74,9 @@ class PathStr(str):
 
     @cached_property
     def segments(self) -> list[list[Step]]:
-        """The steps of each segment, for the fragment of fields, indices, `[*]` and `@`.
+        """The steps of each segment, for the fragment of fields, indices, `[*]`, filters and `@`.
 
-        Raises `ValueError` for anything else (functions, slices, filters).
+        Raises `ValueError` for anything else (functions, slices, other conditions).
         """
         segments = []
         for text in self.removeprefix('.').split('|'):
@@ -76,6 +91,8 @@ class PathStr(str):
                     steps.append(PROJECT)
                 elif match['index']:
                     steps.append(int(match['index']))
+                elif match['key']:
+                    steps.append(Filter(match['key'], json.loads(match['value'])))
                 text = text[match.end() :]
             segments.append(steps)
         return segments
@@ -86,12 +103,19 @@ class PathStr(str):
         return cls(' | '.join(render(steps) for steps in segments))
 
 
+def opens(step: Step) -> bool:
+    """Whether `step` opens a projection: `[*]` or a filter."""
+    return step == PROJECT or isinstance(step, Filter)
+
+
 def render(steps: list[Step]) -> str:
     """One segment as text: fields joined by `.`, `[i]` and `[*]` attached."""
     out = ''
     for step in steps:
         if step == PROJECT:
             out += '[*]'
+        elif isinstance(step, Filter):
+            out += str(step)
         elif isinstance(step, int):
             out += f'[{step}]'
         else:
