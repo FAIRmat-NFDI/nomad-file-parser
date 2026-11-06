@@ -73,3 +73,15 @@ TREE_TWO = {'C': [{'S': [{'E': 1}, {'E': 2}]}, {'S': [{'E': 3}]}]}
 def leaf_under(source: str) -> list[dict[str, Any]]:
     """One repeating section `S` with source `source` and the quantity `E` = `.e`."""
     return [section('S', source, [dict(target='E', path='.e')], [])]
+
+
+@st.composite
+def index_lists(draw):
+    """A source with at least one calculation and a non-empty list K of integers.
+
+    K is unordered, may repeat entries, and may hold negative or out-of-range
+    positions (from -3 to len + 2).
+    """
+    source = draw(sources.filter(lambda x: x['c']))
+    n = len(source['c'])
+    return source, draw(st.lists(st.integers(-3, n + 2), min_size=1, max_size=5))

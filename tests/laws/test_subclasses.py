@@ -8,10 +8,9 @@ from nomad_file_parser.mapping_parser import MetainfoParser
 
 from .shapes import (
     FIELDS,
-    Circle,
+    KINDS,
     Drawing,
     Shape,
-    Square,
     Unrelated,
     annotate,
     built,
@@ -21,6 +20,7 @@ from .shapes import (
     kind_sets,
     qualified,
     shape_data,
+    shape_values,
     summary,
 )
 
@@ -75,54 +75,77 @@ def test_from_dict_keeps_type_per_element(items):
 
 
 @pytest.mark.question('#19')
-def test_sibling_subsections_share_subclasses():
-    """Every annotated subclass lands in every sibling subsection of the base type.
+@given(kind_sets, shape_data)
+def test_sibling_subsections_share_subclasses(kinds, data):
+    """summary(convert([(k1, x)]).first) = summary(convert([(k1, x)]).second) = built(K, x).
+
+    Every annotated subclass lands in every sibling subsection of the base type.
 
     No annotation says which subclass belongs to which of `first`, `second`
     (FAIRmat-NFDI/nomad-file-parser#19).
     """
-    annotate({(Circle, 'k1'), (Square, 'k1')})
-    drawing = convert([('k1', {'radius': 1.0, 'side': 2.0})])
-    expected = [('Circle', {'radius': 1.0}), ('Square', {'side': 2.0})]
-    assert summary(drawing.first) == expected
-    assert summary(drawing.second) == expected
+    annotate({(kind, 'k1') for kind in kinds})
+    drawing = convert([('k1', data)])
+    assert summary(drawing.first) == built(kinds, data)
+    assert summary(drawing.second) == built(kinds, data)
 
 
-@pytest.mark.parametrize(
-    'elements, expected',
-    [
-        pytest.param(
-            [{'m_def': 'no.such.Section', 'name': 'z'}],
-            [('Shape', {'name': 'z'})],
-            id='unknown-m-def-base-field',
-            marks=pytest.mark.question(14),
-        ),
-        pytest.param(
-            [{'m_def': 'no.such.Section', 'radius': 1.0}],
-            [],
-            id='unknown-m-def-subclass-field',
-            marks=pytest.mark.question(14),
-        ),
-        pytest.param(
-            [{'m_def': qualified(Unrelated), 'radius': 1.0}],
-            [],
-            id='m-def-outside-hierarchy',
-            marks=pytest.mark.question(14),
-        ),
-        pytest.param(
-            [{'m_def': qualified(Square), 'radius': 1.0}],
-            [],
-            id='field-of-other-subclass',
-            marks=pytest.mark.question(15),
-        ),
-        pytest.param(
-            [{'m_def': qualified(Circle), 'radius': 0.0}, {'name': ''}],
-            [],
-            id='falsy-only-subsection',
-            marks=pytest.mark.question(17),
-        ),
-    ],
+# m_def values that name no section of the `Shape` hierarchy.
+UNRESOLVABLE = ['no.such.Section', qualified(Unrelated)]
+names = st.sampled_from(['p', 'q'])
+truthy_fields = st.dictionaries(st.sampled_from(sorted(FIELDS.values())), shape_values)
+
+
+@pytest.mark.question(14)
+@given(st.sampled_from(UNRESOLVABLE), st.none() | names, truthy_fields)
+def test_unresolvable_m_def_falls_back_to_base(m_def, name, fields):
+    """from_dict_shapes([{m_def: unresolvable, name: n, **fields}]) = [(Shape, {name: n})], or [] without `n`.
+
+    An element whose `m_def` names no section of the hierarchy (unknown, or a
+    section outside it) is built as the declared base type, so subclass
+    fields are lost; nothing is logged.
+    """
+    element = {'m_def': m_def, **fields, **({} if name is None else {'name': name})}
+    expected = [] if name is None else [('Shape', {'name': name})]
+    assert from_dict_shapes([element]) == expected
+
+
+@pytest.mark.question(15)
+@given(st.sampled_from(KINDS), st.none() | names, truthy_fields)
+def test_element_keeps_only_fields_of_its_type(kind, name, fields):
+    """from_dict_shapes([{m_def: X, **fields}]) = [(X, fields restricted to X)], or [] if none are left.
+
+    A field of another subclass is dropped without a warning (`m_set` fails
+    inside a bare `except`); if no field of `X` or of the base is left, the
+    element is dropped as empty.
+    """
+    element = {
+        'm_def': qualified(kind),
+        **fields,
+        **({} if name is None else {'name': name}),
+    }
+    own = {f: v for f, v in element.items() if f in (FIELDS[kind], 'name')}
+    expected = [(kind.__name__, own)] if own else []
+    assert from_dict_shapes([element]) == expected
+
+
+@pytest.mark.question(17)
+@given(
+    st.sampled_from(KINDS),
+    st.sampled_from([0.0, 1.0]),
+    st.none() | st.sampled_from(['', 'p']),
 )
-def test_from_dict_pinned(elements, expected):
-    """Current type resolution asked about in `OPEN_QUESTIONS.md` (questions 14, 15, 17, per case)."""
-    assert from_dict_shapes(elements) == expected
+def test_falsy_only_element_is_dropped(kind, value, name):
+    """from_dict_shapes([{m_def: X, f: v, name: n}]) = [] when every value is falsy, else the element.
+
+    `0.0` and `''` count as empty in `from_dict` (`or v`), while the mapper
+    keeps them; an element with one truthy value keeps its falsy ones too.
+    """
+    element = {
+        'm_def': qualified(kind),
+        FIELDS[kind]: value,
+        **({} if name is None else {'name': name}),
+    }
+    fields = {f: v for f, v in element.items() if f != 'm_def'}
+    expected = [(kind.__name__, fields)] if any(fields.values()) else []
+    assert from_dict_shapes([element]) == expected

@@ -13,11 +13,10 @@ from hypothesis import example, given
 from nomad_file_parser.mapping_parser import Path
 
 from .trees import (
-    GAP,
     JOINED,
-    TREE_TWO,
     TWO,
     dense,
+    index_lists,
     indexed,
     leaf_under,
     per_element,
@@ -94,67 +93,52 @@ def test_indices_are_source_positions(case):
     assert values(tree(source, outer=positions)) == expected
 
 
-@pytest.mark.parametrize(
-    'specs, source, expected',
-    [
-        pytest.param(
-            None,
-            GAP,
-            {'C': [{'S': [{'E': 1}, {'E': 2}]}, {'S': [{'E': 3}]}]},
-            id='missing-vs-empty',
-            marks=pytest.mark.question(8, 9),
-        ),
-        pytest.param(
-            leaf_under('c[*].s[*]'),
-            TWO,
-            {'S': [{'E': 1}, {'E': 3}]},
-            id='source-double-projection',
-            marks=pytest.mark.question(10),
-        ),
-        pytest.param(
-            leaf_under('c[*].s'),
-            TWO,
-            {'S': [{'E': 1}, {'E': 3}]},
-            id='source-projection-of-lists',
-            marks=pytest.mark.question(10),
-        ),
-        pytest.param(
-            [1, 0],
-            TWO,
-            TREE_TWO,
-            id='indices-order-ignored',
-            marks=pytest.mark.question(11),
-        ),
-        pytest.param(
-            [0, 0],
-            TWO,
-            {'C': [{'S': [{'E': 1}, {'E': 2}]}]},
-            id='indices-duplicate',
-            marks=pytest.mark.question(11),
-        ),
-        pytest.param(
-            [-1], TWO, {}, id='indices-negative', marks=pytest.mark.question(12)
-        ),
-        pytest.param(
-            [5], TWO, {}, id='indices-out-of-range', marks=pytest.mark.question(12)
-        ),
-        pytest.param(
-            [1], GAP, {}, id='indices-select-empty', marks=pytest.mark.question(8)
-        ),
-    ],
-)
-def test_mapper_pinned(specs, source, expected):
-    """Current behaviour asked about in `OPEN_QUESTIONS.md` (questions 8 to 12, per case).
+@pytest.mark.question(11)
+@given(index_lists())
+@example((TWO, [1, 0]))
+@example((TWO, [0, 0]))
+def test_indices_order_and_duplicates_ignored(case):
+    """values(tree(obj, outer=K)) = values(tree(obj, outer=sorted(set(K)))) for K within the positions of `c`.
 
-    `specs` is `None` for tree(obj), a list of indices K for
-    tree(obj, outer=K), or a full mapper spec for run_mapper(specs, obj). For `missing-vs-empty`, Path(c[*].s[*].e).get_data(obj) keeps the
-    middle `[]` that the mapper drops.
+    `indices` act as a set: their order and repetitions do not change the
+    result, which keeps source order.
     """
-    if specs is None:
-        assert Path(path=JOINED).get_data(source) == [[1, 2], [], [3]]
-        result = tree(source)
-    elif all(isinstance(i, int) for i in specs):
-        result = tree(source, outer=specs)
-    else:
-        result = run_mapper(specs, source)
-    assert result == expected
+    source, positions = case
+    n = len(source['c'])
+    positions = [k for k in positions if 0 <= k < n] or [0]
+    assert values(tree(source, outer=positions)) == values(
+        tree(source, outer=sorted(set(positions)))
+    )
+
+
+@pytest.mark.question(12)
+@given(index_lists())
+@example((TWO, [-1]))
+@example((TWO, [5]))
+def test_indices_outside_positions_select_nothing(case):
+    """values(tree(obj, outer=K)) = values(tree(obj, outer=[k for k in K if 0 <= k < len(c)])), and [] when none is in range.
+
+    Negative entries do not count from the end, unlike the path step `[-1]`,
+    and out-of-range entries are ignored without a warning.
+    """
+    source, positions = case
+    n = len(source['c'])
+    in_range = [k for k in positions if 0 <= k < n]
+    expected = values(tree(source, outer=in_range)) if in_range else []
+    assert values(tree(source, outer=positions)) == expected
+
+
+@pytest.mark.question(10)
+@pytest.mark.parametrize('outer', ['c[*].s', 'c[*].s[*]'])
+@given(sources)
+@example(TWO)
+def test_single_mapper_over_two_levels_takes_first(outer, source):
+    """run_mapper(S from outer → E from .e, obj)[S] = [{E: l[0]} for l in per_element(obj) if l != []].
+
+    One repeating mapper whose source crosses two list levels gives one
+    section per calculation with a step that has `e`, holding the first such
+    value, for `outer` = `c[*].s` and `c[*].s[*]` alike.
+    """
+    expected = [{'E': inner[0]} for inner in per_element(source) if inner]
+    result = run_mapper(leaf_under(outer), source)
+    assert result.get('S', []) == expected

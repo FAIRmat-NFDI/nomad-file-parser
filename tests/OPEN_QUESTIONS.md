@@ -131,14 +131,14 @@ Questions 13 to 18 were run on `test/pbt-path-laws` at `99ccf35`, on an unannota
 | 5 | errors | bare `.` | | `test_bare_prefix_is_empty` |
 | 6 | errors | `default=` | | `test_default_ignored_when_parseable`, `test_default_replaces_parse_errors` |
 | 7 | repetition | list source without `indices` | | `test_unindexed_outer_takes_first`, `test_unindexed_inner_takes_first` |
-| 8 | repetition | dropped positions | | `test_nested_sections_drop_empty`, `test_mapper_pinned[indices-select-empty]` |
-| 9 | repetition | nested sections vs joined path | closed: the joined path is JMESPath's; the rest is question 8 | `test_joined_path_is_jmespath`, `test_nested_sections_drop_empty`, `test_mapper_pinned[missing-vs-empty]` |
-| 10 | repetition | projection in a source path | | `test_mapper_pinned[source-double-projection]`, `test_mapper_pinned[source-projection-of-lists]` |
-| 11 | repetition | `indices=[]` as "all" | | `test_mapper_pinned[indices-order-ignored]`, `test_mapper_pinned[indices-duplicate]` |
-| 12 | repetition | negative `indices` | | `test_mapper_pinned[indices-negative]`, `test_mapper_pinned[indices-out-of-range]` |
+| 8 | repetition | dropped positions | | `test_nested_sections_drop_empty`, `test_indices_are_source_positions` |
+| 9 | repetition | nested sections vs joined path | closed: the joined path is JMESPath's; the rest is question 8 | `test_joined_path_is_jmespath`, `test_nested_sections_drop_empty` |
+| 10 | repetition | projection in a source path | | `test_single_mapper_over_two_levels_takes_first` |
+| 11 | repetition | `indices=[]` as "all" | | `test_indices_order_and_duplicates_ignored` |
+| 12 | repetition | negative `indices` | | `test_indices_outside_positions_select_nothing` |
 | 13 | passes | merge across subclasses | | `test_merge_across_subclasses_keeps_first` |
-| 14 | subclasses | unresolvable `m_def` | | `test_from_dict_pinned[unknown-m-def-base-field]`, `[unknown-m-def-subclass-field]`, `[m-def-outside-hierarchy]` |
-| 15 | subclasses | field of another subclass | | `test_from_dict_pinned[field-of-other-subclass]` |
+| 14 | subclasses | unresolvable `m_def` | | `test_unresolvable_m_def_falls_back_to_base` |
+| 15 | subclasses | field of another subclass | | `test_element_keeps_only_fields_of_its_type` |
 | 16 | passes | scalar update modes | | `test_scalar_passes_overwrite` |
-| 17 | subclasses | falsy-only subsections | | `test_from_dict_pinned[falsy-only-subsection]` |
+| 17 | subclasses | falsy-only subsections | | `test_falsy_only_element_is_dropped` |
 | 18 | passes | misaligned element reuse | | `test_append_pass_reuses_misaligned_element` (strict xfail) |
