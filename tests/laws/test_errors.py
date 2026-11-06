@@ -67,14 +67,18 @@ def test_relative_path_in_function(case):
 )
 @given(splits(head_project=False, tail_field=True))
 def test_relative_path_in_function_under_parent(case):
-    """Path(not_null(.q)) under parent `r` reads Path(r.q).get_data(obj).
+    """.q under p inside a call: absolute path not_null(p.q), and Path(not_null(.q)) on Path(p).get_data(obj) = Path(p.q).get_data(obj).
 
-    Agreed (question 4): the parent is prepended inside the call as it is
-    for a relative path on its own.
+    Agreed (question 4): the parent is prepended inside the call, as it is
+    for a relative path on its own (`test_prefix_equals_reroot`), and the
+    child read on the parent's value agrees with the absolute path.
     """
     obj, (parent, child) = case
     path = Path(path=f'not_null({child.relative()})', parent=Path(path=parent))
-    assert path.get_data(obj) == Path(path=parent.dot(child)).get_data(obj)
+    assert path.absolute_path == f'not_null({parent.dot(child)})'
+    expected = Path(path=parent.dot(child)).get_data(obj)
+    assert path.get_data(Path(path=parent).get_data(obj)) == expected
+    assert Path(path=path.absolute_path).get_data(obj) == expected
 
 
 @pytest.mark.question(6)
