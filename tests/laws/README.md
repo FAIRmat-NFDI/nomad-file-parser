@@ -1,7 +1,7 @@
 # Laws of the mapping parser
 
 These property-based tests state the behaviour of the mapping parser as laws: equations that must hold for every generated object and path.
-Behaviour that the JMESPath specification already defines and that `Path` leaves to JMESPath's own code is not tested; it is listed under [Standard JMESPath behaviour](#standard-jmespath-behaviour-not-tested-here).
+`Path` passes projections, pipes and filters to the `jmespath` package unchanged. The JMESPath specification already defines how these behave, so the laws do not test them again; they are listed under [Standard JMESPath behaviour](#standard-jmespath-behaviour-not-tested-here). The laws do test the steps that `Path` reimplements: fields, indices and slices.
 Behaviour whose intent is unclear is pinned as it is today and asked about in [`../OPEN_QUESTIONS.md`](../OPEN_QUESTIONS.md); behaviour we consider wrong is a strict `xfail`.
 
 ## Themes

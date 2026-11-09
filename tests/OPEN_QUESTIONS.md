@@ -18,8 +18,8 @@ All examples were run on `develop` at `97b4d54`.
 
    **Answer:** a read returns `None` and leaves the source untouched. The set-mode result is not settled.
 3. **Slice past the end of a list.**
-   `a[0:5]` and `a[-5:]` on a two-element list give `None`; JMESPath clamps the bounds and returns both elements (`visit_slice` returns `None` in search mode once a bound exceeds the length).
-   A start of exactly `-len` fails too: `v[-10:2]` on ten elements gives `None`. On a five-element list, `Path` differs from JMESPath (which agrees with Python) in 120 of 486 combinations of start, stop and step; a read never changes the list.
+   `a[0:5]` and `a[-5:]` on a two-element list give `None`; JMESPath clamps the bounds and returns both elements (`visit_slice` returns `None` in search mode once a position of the unclamped range reaches `len` or `-len`).
+   On ten elements, `v[0:10:3]` works but `v[0:13:3]` (positions up to 12) and `v[-10:2]` give `None`. The read does not modify the list.
 
    **Answer:** a slice selects as JMESPath and Python do: bounds beyond the ends are clamped, and `[::3]` takes every third element up to the end.
 4. **Relative prefix inside a function call.**
@@ -118,18 +118,42 @@ Questions 9 to 12 were run on `test/pbt-path-laws` at `38ed0c8`, on the source `
 
 Questions 13 to 18 were run on `test/pbt-path-laws` at `99ccf35`, on an unannotated base `Shape` with the subclasses `Circle` (`radius`), `Square` (`side`) and `Triangle` (`height`) under the repeating subsection `Drawing.shapes`.
 
+```
+├──  contains (composition)     ├◁─  specialises (inheritance, ◁ points at the base)
+·    quantity                   [k1: p]  annotation of mapping k1: read path p
+
+Drawing                          [k1: @]
+├── · title: str                 [k1: .title]    used only in question 16
+└── shapes = SubSection(section_def=Shape, repeats=True)
+    │      no annotation, nor on Shape: the mapper then scans Shape's subclasses and maps
+    │      each annotated one, writing its m_def; from_dict looks that m_def up among
+    │      Shape's subclasses, else the element is a Shape
+    └── Shape                     base type, no annotation
+        ├── · name: str
+        ├◁─ Circle                [k1: .@]
+        │   └── · radius: float     [k1: .radius]
+        ├◁─ Square                [k1: .@]
+        │   └── · side: float       [k1: .side]
+        └◁─ Triangle              [k1: .@]
+            └── · height: float     [k1: .height]
+
+Unrelated                         outside the hierarchy
+└── · radius: float
+```
+
 13. **Merging across subclasses keeps the first type.**
    Two passes with `update_mode='merge'`, `Circle` under `k1` and then `Square` under `k2`, on `{radius: 1, side: 2}` give `[Circle(radius=1)]`: the second pass aligns `Square` with the existing element at position 0, the first type wins and `side` is lost without a warning.
    Should a merge at a position whose `m_def` differs append instead, fail, or keep this behaviour?
    A second finding: with `Circle` and `Square` under `k1` and `Triangle` under `k2`, merging gives `[Circle(radius=1), Square()]`. The second pass maps one element, yet the `Square` at position 1 loses its `side` (`test_merge_leaves_unaddressed_sections`, strict xfail: a merge should change only the positions it addresses).
 14. **An unresolvable `m_def` falls back to the base.**
-   In `from_dict`, an element whose `m_def` names no section of the hierarchy (unknown, or a section outside it) is built as the declared base type.
-   With a base field (`name`) it survives as a `Shape`; with a subclass field it is dropped as empty. Neither case is logged.
+   `from_dict` resolves each element's `m_def` against the subclasses of the declared base. When the string names no section of the hierarchy, either unknown (`'no.such.Section'`) or a section outside it (`Unrelated`, which also has a `radius`), the element is built as the base `Shape`.
+   `{m_def: 'no.such.Section', name: 'p'}` therefore gives `[Shape(name='p')]`, while `{m_def: 'no.such.Section', radius: 1}` and `{m_def: Unrelated, radius: 1}` give `[]`: `Shape` has no `radius`, the value is lost and the empty element is removed. Nothing is logged in either case.
    Should an unresolvable `m_def` be reported, or rejected?
 
    **Answer:** it should raise. Low priority: inside NOMAD the metainfo parser writes the `m_def` itself, so it can only happen when a class that is not a NOMAD section is annotated.
 15. **A field of another subclass is dropped silently.**
-   `{m_def: Square, radius: 1}` gives no element: `radius` is not a `Square` quantity, `m_set` fails inside a bare `except`, and the element is dropped as empty.
+   `from_dict` sets each key of an element with `m_set` inside a bare `except`, so a key that is not a quantity of the resolved type is lost without a warning. Fed directly, `{m_def: Square, radius: 1}` gives no element: `radius` is not a `Square` quantity, the write fails silently, and the element is removed as empty.
+   The mapper does not produce such a dict on one pass, since annotations sit on real quantities; it arises when a later pass is aligned by position onto an element of another type, or when a transformer returns a dict for a whole section.
    Should a value that does not fit the resolved type be reported?
 
    **Open:** it should not fail silently; whether it raises or warns is to be decided.
