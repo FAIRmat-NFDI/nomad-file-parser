@@ -42,6 +42,28 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         coveralls --service=github
+  laws:
+    # The property-based law tests in `tests/laws`, run on demand only.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.11
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        uv pip install -e '.[dev]'
+    - name: Run the law tests
+      env:
+        HYPOTHESIS_PROFILE: ci
+      run: |
+        python -m pytest tests/laws --laws -v
   build-and-install:
     runs-on: ubuntu-latest
     steps:

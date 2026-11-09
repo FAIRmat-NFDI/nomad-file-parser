@@ -19,6 +19,7 @@ a dictionary-like structure.
 ## Reference
 
 - [API](reference/api.md)
+- [Path syntax and semantics](reference/paths.md)
 
 ## Main contributors
 

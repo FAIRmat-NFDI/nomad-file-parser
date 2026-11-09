@@ -234,6 +234,17 @@ Run the test suite from this package directory:
 python -m pytest tests
 ```
 
+The law tests in `tests/laws/` are property-based and need Hypothesis from
+the `dev` extra (see `tests/laws/README.md`). A plain run skips them; `--laws`
+runs them, with 25 generated examples per test by default; set
+`HYPOTHESIS_PROFILE=ci` for 200, or `big` for 5000. `--questions` lists them
+with their status instead of running them:
+
+```bash
+HYPOTHESIS_PROFILE=ci python -m pytest tests/laws --laws
+python -m pytest tests/laws --questions
+```
+
 Lint and verify formatting with Ruff:
 
 ```bash
