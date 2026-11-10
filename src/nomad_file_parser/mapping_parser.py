@@ -2502,12 +2502,23 @@ class MetainfoParser(MappingParser):
                     sub_section.m_def = section_def
                     self.from_dict(val_n, sub_section)
                     # Check if sub-section is empty
-                    if not [
-                        v
+                    if not any(
+                        (
+                            v.size > 0
+                            if isinstance(v, np.ndarray)
+                            else len(v) > 0
+                            if isinstance(v, (list, tuple, dict))
+                            else v is not None
+                        )
                         for v in sub_section.values()
-                        if (isinstance(v, list | np.ndarray) and len(v)) or v
-                    ]:
+                    ):
                         empty_indices.append(n)
+                    # if not [
+                    #     v
+                    #     for v in sub_section.values()
+                    #     if (isinstance(v, list | np.ndarray) and len(v)) or v
+                    # ]:
+                    #     empty_indices.append(n)
 
                 # Remove empty sub-sections in reverse order to avoid index shifts
                 for n in reversed(empty_indices):
