@@ -2513,12 +2513,6 @@ class MetainfoParser(MappingParser):
                         for v in sub_section.values()
                     ):
                         empty_indices.append(n)
-                    # if not [
-                    #     v
-                    #     for v in sub_section.values()
-                    #     if (isinstance(v, list | np.ndarray) and len(v)) or v
-                    # ]:
-                    #     empty_indices.append(n)
 
                 # Remove empty sub-sections in reverse order to avoid index shifts
                 for n in reversed(empty_indices):
