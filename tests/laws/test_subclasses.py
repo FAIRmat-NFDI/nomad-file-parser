@@ -140,7 +140,6 @@ def test_element_keeps_only_fields_of_its_type(kind, name, fields):
 
 
 @pytest.mark.question(17)
-@pytest.mark.xfail(strict=True, reason='falsy values count as empty in from_dict')
 @given(
     st.sampled_from(KINDS),
     st.sampled_from([0.0, 1.0]),
