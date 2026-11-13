@@ -1,7 +1,7 @@
 import pytest
 from nomad.metainfo import MSection, Quantity, SubSection
 
-from nomad_file_parser.mapping_parser import MetainfoParser
+from nomad_file_parser.mapping_parser import MetainfoParser, Path
 
 
 class Inner(MSection):
@@ -16,8 +16,9 @@ class Root(MSection):
     many = SubSection(sub_section=Inner, repeats=True)
 
 
-class TestMetainfoParser:
+class TestFalsyValues:
     """tests/laws/test_subclasses.py::test_falsy_values_are_data"""
+
     def _test_from_dict(self, data, expected):
         parser = MetainfoParser(data_object=Root())
         parser.from_dict(data)
@@ -44,3 +45,23 @@ class TestMetainfoParser:
     )
     def test_from_dict_dropped(self, data, expected):
         self._test_from_dict(data, expected)
+
+
+class TestSliceBoundaries:
+    """tests/laws/test_steps.py::test_slice_step, tests/laws/test_steps.py::test_pinned_slices"""
+    @pytest.fixture
+    def content(self):
+        return {'v': list(range(10))}
+    @pytest.mark.parametrize(
+        'query, expected',
+        [
+        ('v[::3]', [0, 3, 6, 9]),
+        ('v[0:13:3]', [0, 3, 6, 9]),
+        ('v[8:11]', [8, 9]),
+        ('v[-11:3]', [0, 1, 2]),
+        ('v[-10:2]', [0, 1]),
+        ('v[-3:3]', []),
+        ],
+    )
+    def test_slice_boundaries(self, content, query, expected):
+        assert Path(path=query).get_data(content) == expected
