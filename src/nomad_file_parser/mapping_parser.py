@@ -488,23 +488,13 @@ class TreeInterpreter(jmespath.visitor.TreeInterpreter):
         s = slice(*node['children'])
         n_value = len(value)
         # Calculate which indices the slice will access
-        indices = list(range(s.start or 0, s.stop or n_value or 1, s.step or 1))
+        indices = list(range(n_value)[s])
         if indices:
-            max_index = max(np.abs(indices))
-            min_index = min(indices)
             # Calculate how many elements needed to accommodate slice range
-            n_target = (
-                max_index
-                - n_value
-                + (0 if min_index < 0 and max_index == -min_index else 1)
-            )
-
-            # In search mode, out-of-bounds slice returns None
-            if max_index >= n_value and self._options.search:
-                return None
-
+            n_target = max(indices) - n_value + 1
             # In set mode, extend array to fit slice
-            value.extend([{} for _ in range(n_target)])
+            if not self._options.search and n_target > 0:
+                value.extend([{} for _ in range(n_target)])
         # if isinstance(value, h5py.Group):
         #     return [g for g in value.values()][s]
         # Record which indices were accessed for later stack navigation
