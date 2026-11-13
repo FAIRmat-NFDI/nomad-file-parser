@@ -85,7 +85,6 @@ strides = st.sampled_from([None, 1, 2, 3, -1, -2])
 
 
 @pytest.mark.question(3)
-@pytest.mark.xfail(strict=True, reason='slices reaching past an end give None')
 @given(st.lists(any_node, max_size=5), bounds, bounds, strides)
 def test_slice_step(items, start, stop, stride):
     """Path(v[a:b:c]).get_data({v: vs}) = [x for x in vs[a:b:c] if x is not None].
@@ -109,7 +108,6 @@ def test_slice_on_non_list_is_none(node, start, stop):
 
 
 TEN = {'v': list(range(10))}
-CLAMPED = pytest.mark.xfail(strict=True, reason='slices reaching past an end give None')
 
 
 @pytest.mark.question(3)
@@ -119,9 +117,9 @@ CLAMPED = pytest.mark.xfail(strict=True, reason='slices reaching past an end giv
         pytest.param('v[::3]', [0, 3, 6, 9], id='every-third'),
         pytest.param('v[1:8:3]', [1, 4, 7], id='every-third-inside'),
         pytest.param('v[0:10:3]', [0, 3, 6, 9], id='stop-at-end'),
-        pytest.param('v[0:13:3]', [0, 3, 6, 9], id='stop-beyond-end', marks=CLAMPED),
-        pytest.param('v[-11:3]', [0, 1, 2], id='start-before-start', marks=CLAMPED),
-        pytest.param('v[-10:2]', [0, 1], id='start-at-minus-length', marks=CLAMPED),
+        pytest.param('v[0:13:3]', [0, 3, 6, 9], id='stop-beyond-end'),
+        pytest.param('v[-11:3]', [0, 1, 2], id='start-before-start'),
+        pytest.param('v[-10:2]', [0, 1], id='start-at-minus-length'),
         pytest.param('v[8:]', [8, 9], id='to-the-end'),
         pytest.param('v[::-4]', [9, 5, 1], id='backwards'),
         pytest.param('v[12:]', [], id='start-beyond-end'),
