@@ -63,5 +63,24 @@ class TestSliceBoundaries:
         ('v[-3:3]', []),
         ],
     )
-    def test_slice_boundaries(self, content, query, expected):
+    def test_slice_boundaries_search(self, content, query, expected):
         assert Path(path=query).get_data(content) == expected
+
+    @pytest.fixture
+    def content_settable(self):
+        return {'v': list(range(4))}
+    @pytest.fixture
+    def to_set(self):
+        return [10, 20]
+    @pytest.mark.parametrize(
+        'path, expected',
+        [
+        ('v[::2]', [10, 1, 20, 3]),
+        ('v[::-2]', [0, 20, 2, 10]),
+        ('v[4:6]', [0, 1, 2, 3, 10, 20]),
+        ('v[5:3:-1]', [0, 1, 2, 3, 20, 10]),
+        ],
+    )
+    def test_slice_boundaries_set(self, content_settable, to_set, path, expected):
+        Path(path=path).set_data(to_set, content_settable)
+        assert content_settable['v'] == expected
