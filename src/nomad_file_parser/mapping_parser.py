@@ -483,12 +483,27 @@ class TreeInterpreter(jmespath.visitor.TreeInterpreter):
     def visit_slice(self, node: dict[str, Any], value: list) -> list | None:
         if not isinstance(value, list):
             return None
+        n_value = len(value)
 
         # Parse slice notation: [start:stop:step]
         s = slice(*node['children'])
-        n_value = len(value)
+
+        def max_out_of_bounds(s: slice, n: int) -> int | None:
+            """Find max. positive index out-of-bonds."""
+            idx = []
+            if s.start is not None and s.start >= n:
+                idx.append(s.start+1)
+            if s.stop is not None and s.stop > n:
+                idx.append(s.stop)
+            return max(idx) if idx else None
+
+        max_v = None
         # Calculate which indices the slice will access
-        indices = list(range(n_value)[s])
+        if (not self._options.search) and ((max_v := max_out_of_bounds(s, n_value)) is not None):
+            indices = list(range(max_v)[s])
+        else:
+            indices = list(range(n_value)[s])
+
         if indices:
             # Calculate how many elements needed to accommodate slice range
             n_target = max(indices) - n_value + 1
