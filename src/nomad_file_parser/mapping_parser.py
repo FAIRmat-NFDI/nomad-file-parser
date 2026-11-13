@@ -222,6 +222,37 @@ Maps the first 3 bytes of a file to (extension, open_function) tuples for gzip, 
 """
 
 
+def is_not_value(value: Any) -> bool:
+    """Check if a value is considered "empty"/"not a value".
+
+    Empty values include:
+        None, empty list, empty dict, empty numpy array,
+        or Pint quantity with empty magnitude.
+
+    Args:
+        value: Any value to check.
+
+    Returns:
+        bool: True if value is considered empty.
+    """
+    # Empty numpy array
+    if isinstance(value, np.ndarray):
+        return value.size == 0
+    # Pint quantity: check underlying magnitude
+    if hasattr(value, 'magnitude'):
+        return is_not_value(value.magnitude)
+
+    # Check equality with common empty values
+    not_value: Any
+    for not_value in [None, [], {}]:
+        test = value == not_value
+        # Handle numpy array comparison returning array of bools
+        result = test.any() if isinstance(test, np.ndarray) else test
+        if result:
+            return bool(result)
+    return False
+
+
 class JmespathOptions(jmespath.visitor.Options):
     """Extended options for custom jmespath operations.
 
@@ -1762,27 +1793,6 @@ class Mapper(BaseMapper, validate_assignment=True):
         Items without one follow in their original relative order. The key is
         removed before assigning the list.
         """
-        dct = {}
-
-        def is_not_value(value: Any) -> bool:
-            # Empty numpy array
-            if isinstance(value, np.ndarray):
-                return value.size == 0
-            # Pint quantity: check underlying magnitude
-            if hasattr(value, 'magnitude'):
-                return is_not_value(value.magnitude)
-
-            # Check equality with common empty values
-            not_value: Any
-            for not_value in [None, [], {}]:
-                test = value == not_value
-                # Handle numpy array comparison returning array of bools
-                result = test.any() if isinstance(test, np.ndarray) else test
-                if result:
-                    return bool(result)
-
-            return False
-
         def get_mapper_data(mapper: BaseMapper) -> list[Any]:
             # Start with full source data unless mapper has custom source
             data = source_data
@@ -1837,6 +1847,7 @@ class Mapper(BaseMapper, validate_assignment=True):
             index = item.pop('__index', None) if isinstance(item, dict) else None
             return index if isinstance(index, int) else float('inf')
 
+        dct = {}
         for mapper in self.mappers:
             value = []
             for m in mapper:
@@ -2502,11 +2513,7 @@ class MetainfoParser(MappingParser):
                     sub_section.m_def = section_def
                     self.from_dict(val_n, sub_section)
                     # Check if sub-section is empty
-                    if not [
-                        v
-                        for v in sub_section.values()
-                        if (isinstance(v, list | np.ndarray) and len(v)) or v
-                    ]:
+                    if all(is_not_value(v) for v in sub_section.values()):
                         empty_indices.append(n)
 
                 # Remove empty sub-sections in reverse order to avoid index shifts
