@@ -1,5 +1,6 @@
 import pytest
 from nomad.metainfo import MSection, Quantity, SubSection
+
 from nomad_file_parser.mapping_parser import MetainfoParser
 
 
@@ -16,7 +17,7 @@ class Root(MSection):
 
 
 class TestMetainfoParser:
-"""tests/laws/test_subclasses.py::test_falsy_values_are_data"""
+    """tests/laws/test_subclasses.py::test_falsy_values_are_data"""
     def _test_from_dict(self, data, expected):
         parser = MetainfoParser(data_object=Root())
         parser.from_dict(data)
