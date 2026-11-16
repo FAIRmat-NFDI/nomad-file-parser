@@ -91,18 +91,11 @@ def test_scalar_passes_overwrite(mode, old, new):
 
 
 @pytest.mark.question(18)
-@pytest.mark.xfail(strict=True, reason='a later pass reuses a misaligned element')
 def test_append_pass_reuses_misaligned_element():
     """summary(convert([(k1, x), (k2, x)], 'append').shapes) = [('Triangle', {height: 1.0})].
 
     With `Circle` and `Triangle` under `k1`, nothing under `k2` and
-    x = {height: 1.0}.
-    Pass 1 drops the empty `Circle` from the archive but keeps it in the
-    parser's intermediate data, so position 0 holds `Circle` there and
-    `Triangle` in the archive. Pass 2 replays the data by position, reuses
-    the `Triangle` instance at 0 and reassigns its `m_def` to `Circle`: the
-    result is [Triangle with `m_def` Circle, Triangle {height: 1}]
-    (question 18).
+    x = {height: 1.0} (question 18).
     """
     annotate({(Circle, 'k1'), (Triangle, 'k1')}, update_mode='append')
     data = {'height': 1.0}
