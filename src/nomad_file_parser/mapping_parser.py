@@ -1840,11 +1840,18 @@ class Mapper(BaseMapper, validate_assignment=True):
 
                 # Filter by indices if specified (only include matching positions)
                 if indices:
+                    resolved = {}
                     for n in indices:
                         if n < -len(data_list) or n >= len(data_list):
                             continue
-                        d = data_list[n]
-                        v = resolve_d(d)
+
+                        # Cache value in case of duplicate indices
+                        if n < 0:
+                            n = len(data_list) + n
+                        if n not in resolved:
+                            resolved[n] = resolve_d(data_list[n])
+                        v = resolved[n]
+
                         # Filter out empty values
                         if not is_not_value(v):
                             value.append(v)
