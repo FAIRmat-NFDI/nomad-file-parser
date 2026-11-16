@@ -467,7 +467,7 @@ class TreeInterpreter(jmespath.visitor.TreeInterpreter):
         index = node['value']
         n_value = len(value)
         # In search mode, out-of-bounds access returns None
-        if self._options.search and index >= n_value:
+        if self._options.search and (index >= n_value or index < -n_value):
             return None
 
         # In set mode, extend array to accommodate index

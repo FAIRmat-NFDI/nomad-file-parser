@@ -1,3 +1,5 @@
+import copy
+
 import pytest
 from nomad.metainfo import MSection, Quantity, SubSection
 
@@ -84,3 +86,19 @@ class TestSliceBoundaries:
     def test_slice_boundaries_set(self, content_settable, to_set, path, expected):
         Path(path=path).set_data(to_set, content_settable)
         assert content_settable['v'] == expected
+
+
+class TestVisitIndex:
+    """tests/laws/test_steps.py::test_index_past_start_is_none"""
+    @pytest.mark.parametrize(
+        'path, source, expected_value',
+        [
+            ('a[-3]', {'a': [1, 2]}, None),
+            ('a[-1]', {'a': []}, None),
+            ('a[-2]', {'a': [1, 2]}, 1),
+        ],
+    )
+    def test_negative(self, path, source, expected_value):
+        expected_source = copy.deepcopy(source)
+        assert Path(path=path).get_data(source) == expected_value
+        assert source == expected_source
