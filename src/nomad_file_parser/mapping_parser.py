@@ -1830,16 +1830,32 @@ class Mapper(BaseMapper, validate_assignment=True):
 
             # Cache miss or no caching: execute mapper on each data element
             if not value:
-                for n, d in enumerate(data if isinstance(data, list) else [data]):
+                data_list = data if isinstance(data, list) else [data]
+
+                def resolve_d(d):
                     v = mapper.get_data(d, parser, **kwargs)
-                    # Filter by indices if specified (only include matching positions)
-                    if indices and n not in indices:
-                        continue
                     if isinstance(d, dict) and isinstance(v, dict) and '__index' in d:
                         v = {**v, '__index': d['__index']}
-                    # Filter out empty values
-                    if not is_not_value(v):
-                        value.append(v)
+                    return v
+
+                # Filter by indices if specified (only include matching positions)
+                if indices:
+                    for n in indices:
+                        if n < -len(data_list) or n >= len(data_list):
+                            continue
+                        d = data_list[n]
+                        v = resolve_d(d)
+                        # Filter out empty values
+                        if not is_not_value(v):
+                            value.append(v)
+
+                else:
+                    for n, d in enumerate(data_list):
+                        v = resolve_d(d)
+                        # Filter out empty values
+                        if not is_not_value(v):
+                            value.append(v)
+
                 # Populate transformer result cache
                 if value and mapper.cache and isinstance(mapper, Transformer):
                     self.__cache.setdefault(mapper.function_name, value)

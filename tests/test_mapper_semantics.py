@@ -107,18 +107,22 @@ class TestVisitIndex:
 @pytest.mark.parametrize(
     'indices, expected_positions',
     [
-        pytest.param([0, 1], [0, 1], id='source-order'),
-        pytest.param([1, 0], [0, 1], id='source-order'),
-        pytest.param([0, 0], [0], id='duplicate-index'),
-        pytest.param([-1], [], id='negative-index'),
-        pytest.param([-3], [], id='negative-out-of-bounds'),
+        #pytest.param(None, [0], id='source-order'), # what should happen here?
+        pytest.param([0, 1], [0, 1], id='source-order-direct'),
+        pytest.param([1, 0], [1, 0], id='source-order-reversed'),
+        pytest.param([0, 0], [0, 0], id='duplicate-index'),
+        pytest.param([-2], [1], id='negative-index'),
+        pytest.param([-4], [], id='negative-out-of-bounds'),
         pytest.param([5], [], id='positive-out-of-bounds'),
+        pytest.param([0, 2], [0], id='requested-empty'), # I think empty should be returned
+        pytest.param([0,10], [0], id='requested-out-of-bounds'), # I think empty should be returned
     ],
 )
 def test_mapper_get_data_indices(indices, expected_positions):
     c0 = {'s': [{'e': 1}, {'e': 2}]}
     c1 = {'s': [{'e': 3}]}
-    source = {'c': [c0, c1]}
+    c2 = {'s': []}
+    source = {'c': [c0, c1, c2]}
     expected = (
         {'C': [source['c'][i] for i in expected_positions]}
         if expected_positions
