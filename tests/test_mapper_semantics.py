@@ -1,7 +1,7 @@
 import copy
 
 import pytest
-from laws.shapes import Square, from_dict_shapes, qualified
+from laws.shapes import Circle, Drawing, Square, from_dict_shapes, qualified, summary
 from nomad.metainfo import MSection, Quantity, SubSection
 
 from nomad_file_parser.mapping_parser import Mapper, MetainfoParser, Path
@@ -17,7 +17,33 @@ from nomad_file_parser.mapping_parser import Mapper, MetainfoParser, Path
 def test_from_dict_drops_fields_outside_resolved_type(fields, expected, caplog):
     """tests/laws/test_subclasses.py::test_element_keeps_only_fields_of_its_type"""
     assert from_dict_shapes([{'m_def': qualified(Square), **fields}]) == expected
-    assert not caplog.records
+    assert [record.getMessage() for record in caplog.records] == [
+        f"Unknown key 'radius' for resolved type {qualified(Square)!r}; skipping"
+    ]
+
+
+def test_from_dict_warns_once_per_key_and_type(caplog):
+    parser = MetainfoParser(data_object=Drawing())
+    for _ in range(2):
+        parser.from_dict(
+            {
+                'shapes': [
+                    {'m_def': qualified(Square), 'radius': 1.0, 'height': 3.0, 'side': 2.0},
+                    {'m_def': qualified(Square), 'radius': 1.0, 'side': 2.0},
+                    {'m_def': qualified(Circle), 'height': 3.0, 'radius': 1.0},
+                ]
+            }
+        )
+
+    assert [record.getMessage() for record in caplog.records] == [
+        f'Unknown key {key!r} for resolved type {qualified(kind)!r}; skipping'
+        for key, kind in [('radius', Square), ('height', Square), ('height', Circle)]
+    ]
+    assert summary(parser.data_object.shapes) == [
+        ('Square', {'side': 2.0}),
+        ('Square', {'side': 2.0}),
+        ('Circle', {'radius': 1.0}),
+    ]
 
 
 class TestPathWithFunction:

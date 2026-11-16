@@ -2432,6 +2432,7 @@ class MetainfoParser(MappingParser):
 
     def __init__(self, **kwargs):
         self._annotation_key: str = kwargs.get('annotation_key', 'mapping')
+        self._warned_unknown_keys: set[tuple[str, str]] = set()
         self.max_nested_level: int = 3
         super().__init__(**kwargs)
 
@@ -2486,6 +2487,14 @@ class MetainfoParser(MappingParser):
 
         for key, val in dct.items():
             if not hasattr(root, key):
+                resolved_type = root.m_def.qualified_name()
+                warning_key = (key, resolved_type)
+                # Warn once per key and resolved type for this parser instance.
+                if warning_key not in self._warned_unknown_keys:
+                    self.logger.warning(
+                        f'Unknown key {key!r} for resolved type {resolved_type!r}; skipping'
+                    )
+                    self._warned_unknown_keys.add(warning_key)
                 continue
 
             section = getattr(root.m_def.section_cls, key)
