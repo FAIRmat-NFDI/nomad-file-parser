@@ -59,7 +59,6 @@ def test_merge_across_subclasses_keeps_first(kinds, data):
 
 
 @pytest.mark.question(13)
-@pytest.mark.xfail(strict=True, reason='a merge empties a section it does not address')
 @given(st.permutations(KINDS), full_shape_data)
 @example([Circle, Square, Triangle], {'radius': 1.0, 'side': 2.0, 'height': 3.0})
 def test_merge_leaves_unaddressed_sections(kinds, data):
@@ -67,8 +66,7 @@ def test_merge_leaves_unaddressed_sections(kinds, data):
 
     Agreed: a `merge` pass changes only the positions it addresses. The
     second pass maps one element, so only position 0 is merged and the
-    second subclass of the first pass keeps its field. Fails today: that
-    section is left without its field.
+    second subclass of the first pass keeps its field.
     """
     first_pass, second_pass = set(kinds[:2]), kinds[2]
     annotate(
