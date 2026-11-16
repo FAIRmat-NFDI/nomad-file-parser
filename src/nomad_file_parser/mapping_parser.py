@@ -2482,13 +2482,8 @@ class MetainfoParser(MappingParser):
             root = self.data_object
 
         for key, val in dct.items():
-            if key == 'm_def':
-                continue
             if not hasattr(root, key):
-                raise ValueError(
-                    f'Unknown key {key!r} for resolved type '
-                    f'{root.m_def.qualified_name()!r}'
-                )
+                continue
 
             section = getattr(root.m_def.section_cls, key)
             is_subsection = MetainfoParser._is_sub_section(section)
@@ -2546,6 +2541,9 @@ class MetainfoParser(MappingParser):
                 for n in reversed(empty_indices):
                     root.m_remove_sub_section(section, index=n)
                     val_list.pop(n)
+                continue
+
+            if key == 'm_def':
                 continue
 
             try:
