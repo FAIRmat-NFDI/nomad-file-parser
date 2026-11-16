@@ -2496,14 +2496,21 @@ class MetainfoParser(MappingParser):
                     # Resolve type PER ITEM (for heterogeneous lists)
                     item_m_def = val_n.get('m_def')
                     section_def = section.sub_section
+
+                    # Search subclasses when m_def names a type other than the declared base.
                     if (
                         item_m_def is not None
-                        and item_m_def != section.qualified_name()
+                        and item_m_def != section_def.qualified_name()
                     ):
                         for isection in section.sub_section.all_inheriting_sections:
                             if isection.qualified_name() == item_m_def:
                                 section_def = isection
                                 break
+                        else:
+                            raise ValueError(
+                                f'Invalid m_def {item_m_def!r} for subsection {key!r}: '
+                                f'expected {section_def.qualified_name()} or a subclass'
+                            )
 
                     # quantities = section_def.all_quantities
                     try:
