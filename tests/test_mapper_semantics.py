@@ -6,6 +6,26 @@ from nomad.metainfo import MSection, Quantity, SubSection
 from nomad_file_parser.mapping_parser import Mapper, MetainfoParser, Path
 
 
+class TestPathWithFunction:
+    """tests/laws/test_errors.py::test_relative_path_in_function
+    tests/laws/test_errors.py::test_relative_path_in_function_under_parent"""
+    @pytest.mark.parametrize(
+        'query, parent, source, absolute_path, expected_value',
+        [
+            ('.a.b', None, {'a': {'b': [1, 2]}}, 'a.b', [1, 2]),
+            ('.b', 'a', {'a': {'b': [1, 2]}}, 'a.b', [1, 2]),
+            ('length(.a.b)', None, {'a': {'b': [1, 2]}}, 'length(a.b)', 2),
+            ('length(.b)', 'a', {'a': {'b': [1, 2]}}, 'length(a.b)', 2),
+            ('not_null(.n)', None, {'n': None}, 'not_null(n)', None),
+        ],
+    )
+    def test_function_relative_argument_current_behavior(self, query, parent, source, absolute_path, expected_value):
+        path = Path(path=query, parent=Path(path=parent) if parent else None)
+        assert path.absolute_path == absolute_path
+        section_data = path.parent.get_data(source) if path.parent is not None else source
+        assert path.get_data(section_data) == expected_value
+
+
 class Inner(MSection):
     value = Quantity(type=float)
     name = Quantity(type=str)
