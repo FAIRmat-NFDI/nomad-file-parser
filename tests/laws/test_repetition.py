@@ -109,7 +109,6 @@ def test_indices_are_source_positions(case):
 
 
 @pytest.mark.question(11)
-@pytest.mark.xfail(strict=True, reason='indices ignore their order and repeats')
 @given(index_lists())
 @example((TWO, [1, 0]))
 @example((TWO, [0, 0]))
@@ -117,9 +116,7 @@ def test_indices_keep_order_and_repeats(case):
     """values(tree(obj, outer=K)) = [per_element(obj)[k] for k in K if per_element(obj)[k] != []], for 0 <= k < len(c).
 
     Agreed (question 11): `indices` select like a JMESPath multi-select
-    `[c[k1], c[k2], …]`, in the order given and with repeats. Fails today:
-    they act as a set, so the result keeps source order and a repeated
-    position appears once.
+    `[c[k1], c[k2], …]`, in the order given and with repeats.
     """
     source, positions = case
     n = len(source['c'])
@@ -130,15 +127,13 @@ def test_indices_keep_order_and_repeats(case):
 
 
 @pytest.mark.question(12)
-@pytest.mark.xfail(strict=True, reason='negative indices select nothing')
 @given(index_lists())
 @example((TWO, [-1]))
 def test_negative_indices_count_from_the_end(case):
     """values(tree(obj, outer=K)) = [per_element(obj)[k] for k in K if per_element(obj)[k] != []], for -len(c) <= k < len(c).
 
     Agreed (question 12): a negative entry selects position len(c) + k, as
-    the path step `[k]` does. Out-of-range entries stay ignored. Fails today:
-    a negative entry selects nothing.
+    the path step `[k]` does. Out-of-range entries stay ignored.
     """
     source, positions = case
     n = len(source['c'])
