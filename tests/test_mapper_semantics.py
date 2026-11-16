@@ -1,9 +1,23 @@
 import copy
 
 import pytest
+from laws.shapes import Square, from_dict_shapes, qualified
 from nomad.metainfo import MSection, Quantity, SubSection
 
 from nomad_file_parser.mapping_parser import Mapper, MetainfoParser, Path
+
+
+@pytest.mark.parametrize(
+    'fields, expected',
+    [
+        ({'radius': 1.0}, []),
+        ({'radius': 1.0, 'side': 2.0}, [('Square', {'side': 2.0})]),
+    ],
+)
+def test_from_dict_drops_fields_outside_resolved_type(fields, expected, caplog):
+    """tests/laws/test_subclasses.py::test_element_keeps_only_fields_of_its_type"""
+    assert from_dict_shapes([{'m_def': qualified(Square), **fields}]) == expected
+    assert not caplog.records
 
 
 class TestPathWithFunction:
