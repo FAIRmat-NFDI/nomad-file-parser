@@ -3,7 +3,7 @@ import copy
 import pytest
 from nomad.metainfo import MSection, Quantity, SubSection
 
-from nomad_file_parser.mapping_parser import MetainfoParser, Path
+from nomad_file_parser.mapping_parser import Mapper, MetainfoParser, Path
 
 
 class Inner(MSection):
@@ -102,3 +102,40 @@ class TestVisitIndex:
         expected_source = copy.deepcopy(source)
         assert Path(path=path).get_data(source) == expected_value
         assert source == expected_source
+
+
+@pytest.mark.parametrize(
+    'indices, expected_positions',
+    [
+        pytest.param([0, 1], [0, 1], id='source-order'),
+        pytest.param([1, 0], [0, 1], id='source-order'),
+        pytest.param([0, 0], [0], id='duplicate-index'),
+        pytest.param([-1], [], id='negative-index'),
+        pytest.param([-3], [], id='negative-out-of-bounds'),
+        pytest.param([5], [], id='positive-out-of-bounds'),
+    ],
+)
+def test_mapper_get_data_indices(indices, expected_positions):
+    c0 = {'s': [{'e': 1}, {'e': 2}]}
+    c1 = {'s': [{'e': 3}]}
+    source = {'c': [c0, c1]}
+    expected = (
+        {'C': [source['c'][i] for i in expected_positions]}
+        if expected_positions
+        else {}
+    )
+    mapper = Mapper.from_dict(
+        {
+            'mapper': [
+                {
+                    'target': 'C',
+                    'source': 'c',
+                    'indices': indices,
+                    'mapper': [{'target': 's', 'path': '.s'}],
+                }
+            ]
+        }
+    )
+    parser = MetainfoParser(data=source)
+    data = mapper.get_data(source, parser)
+    assert data == expected
