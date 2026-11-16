@@ -37,9 +37,6 @@ def test_bare_prefix_is_empty(obj):
 
 
 @pytest.mark.question(4)
-@pytest.mark.xfail(
-    strict=True, reason='a relative path inside a function does not parse'
-)
 @given(pipelines())
 @example(({'a': [1, 2]}, PathStr('a')))
 def test_relative_path_in_function(case):
@@ -48,9 +45,7 @@ def test_relative_path_in_function(case):
     Agreed (question 4): `.p` inside a function call is read like `.p` on its
     own, and its value, `None` included, is passed to the function.
     `not_null` returns its argument unchanged, so the law isolates the
-    path; on {a: [1, 2]}, `length(.a)` is then 2. Fails today: the prefix is
-    stripped only at the start of the path, so the call does not parse and
-    the read gives `None`.
+    path; on {a: [1, 2]}, `length(.a)` is then 2.
     """
     obj, path = case
     assert Path(path=f'not_null({path.relative()})').get_data(obj) == Path(
@@ -59,9 +54,6 @@ def test_relative_path_in_function(case):
 
 
 @pytest.mark.question(4)
-@pytest.mark.xfail(
-    strict=True, reason='a relative path inside a function does not parse'
-)
 @given(splits(head_project=False, tail_field=True))
 def test_relative_path_in_function_under_parent(case):
     """.q under p inside a call: absolute path not_null(p.q), and Path(not_null(.q)) on Path(p).get_data(obj) = Path(p.q).get_data(obj).
