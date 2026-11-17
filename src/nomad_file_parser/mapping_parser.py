@@ -483,28 +483,33 @@ class TreeInterpreter(jmespath.visitor.TreeInterpreter):
     def visit_slice(self, node: dict[str, Any], value: list) -> list | None:
         if not isinstance(value, list):
             return None
+        n_value = len(value)
 
         # Parse slice notation: [start:stop:step]
         s = slice(*node['children'])
-        n_value = len(value)
+
+        def max_out_of_bounds(s: slice, n: int) -> int | None:
+            """Find max. positive index out-of-bonds."""
+            idx = []
+            if s.start is not None and s.start >= n:
+                idx.append(s.start+1)
+            if s.stop is not None and s.stop > n:
+                idx.append(s.stop)
+            return max(idx) if idx else None
+
+        max_v = None
         # Calculate which indices the slice will access
-        indices = list(range(s.start or 0, s.stop or n_value or 1, s.step or 1))
+        if (not self._options.search) and ((max_v := max_out_of_bounds(s, n_value)) is not None):
+            indices = list(range(max_v)[s])
+        else:
+            indices = list(range(n_value)[s])
+
         if indices:
-            max_index = max(np.abs(indices))
-            min_index = min(indices)
             # Calculate how many elements needed to accommodate slice range
-            n_target = (
-                max_index
-                - n_value
-                + (0 if min_index < 0 and max_index == -min_index else 1)
-            )
-
-            # In search mode, out-of-bounds slice returns None
-            if max_index >= n_value and self._options.search:
-                return None
-
+            n_target = max(indices) - n_value + 1
             # In set mode, extend array to fit slice
-            value.extend([{} for _ in range(n_target)])
+            if not self._options.search and n_target > 0:
+                value.extend([{} for _ in range(n_target)])
         # if isinstance(value, h5py.Group):
         #     return [g for g in value.values()][s]
         # Record which indices were accessed for later stack navigation
