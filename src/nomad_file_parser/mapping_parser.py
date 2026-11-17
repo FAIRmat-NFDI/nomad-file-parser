@@ -1770,17 +1770,16 @@ class Mapper(BaseMapper, validate_assignment=True):
         """Execute all sub-mappers and aggregate results into a dictionary.
 
         Iterates through sub-mappers, executing each one and collecting results.
-        Handles caching, array iteration, indices filtering, and empty value detection.
+        Handles caching, array iteration, and empty value detection.
 
         Execution flow for each sub-mapper:
         1. Determine source data (from mapper.source or use parent source_data)
         2. Check cache if mapper.source.transformer.cache=True
         3. Iterate over source data if it's a list, otherwise treat as single item
         4. Execute mapper.get_data() for each item (RECURSIVE for nested Mappers)
-        5. Filter by indices if specified (can be list or function name on parser)
-        6. Skip empty values (None, [], {}, empty arrays)
-        7. Normalize and aggregate non-empty values
-        8. Store result at mapper.target.path in output dictionary
+        5. Skip empty values (None, [], {}, empty arrays)
+        6. Normalize and aggregate non-empty values
+        7. Store result at mapper.target.path in output dictionary
 
         Recursion: When a sub-mapper is a `Mapper`, step 4 recursively calls this
         method, creating a tree-like execution structure for deeply nested mappings.
@@ -1791,8 +1790,7 @@ class Mapper(BaseMapper, validate_assignment=True):
             **kwargs: Options passed to sub-mapper get_data methods.
 
         Returns:
-            dict[str, Any]: Dictionary mapping target paths to transformed values.
-                           Single values if indices=None, lists if indices specified.
+            dict[str, Any]: Dictionary mapping target paths to single transformed values.
 
         Mapped dictionaries with an integer ``__index`` are sorted first.
         Items without one follow in their original relative order. The key is
@@ -1815,14 +1813,6 @@ class Mapper(BaseMapper, validate_assignment=True):
                             mapper.source.transformer.function_name, data
                         )
 
-            # Resolve indices: can be direct list or parser attribute name
-            indices = mapper.indices
-            if isinstance(indices, str):
-                # Fetch attribute from parser (e.g., 'atom_indices')
-                indices = getattr(parser, indices, [])
-                if callable(indices):
-                    indices = indices()
-
             # Check transformer result cache
             value: list[Any] = []
             if isinstance(mapper, Transformer) and mapper.cache:
@@ -1830,12 +1820,10 @@ class Mapper(BaseMapper, validate_assignment=True):
 
             # Cache miss or no caching: execute mapper on each data element
             if not value:
-
                 for n, d in enumerate(data if isinstance(data, list) else [data]):
                     v = mapper.get_data(d, parser, **kwargs)
                     if isinstance(d, dict) and isinstance(v, dict) and '__index' in d:
                         v = {**v, '__index': d['__index']}
-
                     # Filter out empty values
                     if not is_not_value(v):
                         value.append(v)
@@ -1863,7 +1851,7 @@ class Mapper(BaseMapper, validate_assignment=True):
             if value:
                 value.sort(key=source_index)
                 dct[mapper.target.path.path] = (
-                    value[0] if mapper.indices is None else value
+                    value[0] if mapper.indices is None else value  # TODO:xe
                 )
         return dct
 
