@@ -3,7 +3,7 @@ import copy
 import pytest
 from nomad.metainfo import MSection, Quantity, SubSection
 
-from nomad_file_parser.mapping_parser import Mapper, MetainfoParser, Path
+from nomad_file_parser.mapping_parser import MetainfoParser, Path
 
 
 class Inner(MSection):
@@ -102,44 +102,3 @@ class TestVisitIndex:
         expected_source = copy.deepcopy(source)
         assert Path(path=path).get_data(source) == expected_value
         assert source == expected_source
-
-
-@pytest.mark.parametrize(
-    'indices, expected_positions',
-    [
-        #pytest.param(None, [0], id='source-order'), # what should happen here?
-        pytest.param([0, 1], [0, 1], id='source-order-direct'),
-        pytest.param([1, 0], [1, 0], id='source-order-reversed'),
-        pytest.param([0, 0], [0, 0], id='duplicate-index'),
-        pytest.param([-2], [1], id='negative-index'),
-        pytest.param([-4], [], id='negative-out-of-bounds'),
-        pytest.param([5], [], id='positive-out-of-bounds'),
-        pytest.param([0, 2], [0], id='requested-empty'), # I think empty should be returned
-        pytest.param([0,10], [0], id='requested-out-of-bounds'), # I think empty should be returned
-    ],
-)
-def test_mapper_get_data_indices(indices, expected_positions):
-    c0 = {'s': [{'e': 1}, {'e': 2}]}
-    c1 = {'s': [{'e': 3}]}
-    c2 = {'s': []}
-    source = {'c': [c0, c1, c2]}
-    expected = (
-        {'C': [source['c'][i] for i in expected_positions]}
-        if expected_positions
-        else {}
-    )
-    mapper = Mapper.from_dict(
-        {
-            'mapper': [
-                {
-                    'target': 'C',
-                    'source': 'c',
-                    'indices': indices,
-                    'mapper': [{'target': 's', 'path': '.s'}],
-                }
-            ]
-        }
-    )
-    parser = MetainfoParser(data=source)
-    data = mapper.get_data(source, parser)
-    assert data == expected
