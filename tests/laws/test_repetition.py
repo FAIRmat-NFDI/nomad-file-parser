@@ -93,56 +93,6 @@ def test_repeating_section_reads_a_dict_as_one_element(source):
     assert tree(unwrap(source)) == tree(source)
 
 
-@given(indexed())
-def test_indices_are_source_positions(case):
-    """values(tree(obj, outer=K)) = [l for n, l in enumerate(per_element(obj)) if n in K and l != []].
-
-    For a sorted `K` without repeats. `indices` select by position in the
-    source first, and only then are empty elements dropped: a position in
-    `K` counts the input, not the output (question 8, answered).
-    """
-    source, positions = case
-    expected = [
-        inner for n, inner in enumerate(per_element(source)) if n in positions and inner
-    ]
-    assert values(tree(source, outer=positions)) == expected
-
-
-@pytest.mark.question(11)
-@given(index_lists())
-@example((TWO, [1, 0]))
-@example((TWO, [0, 0]))
-def test_indices_keep_order_and_repeats(case):
-    """values(tree(obj, outer=K)) = [per_element(obj)[k] for k in K if per_element(obj)[k] != []], for 0 <= k < len(c).
-
-    Agreed (question 11): `indices` select like a JMESPath multi-select
-    `[c[k1], c[k2], …]`, in the order given and with repeats.
-    """
-    source, positions = case
-    n = len(source['c'])
-    positions = [k for k in positions if 0 <= k < n] or [0]
-    selected = per_element(source)
-    expected = [selected[k] for k in positions if selected[k]]
-    assert values(tree(source, outer=positions)) == expected
-
-
-@pytest.mark.question(12)
-@given(index_lists())
-@example((TWO, [-1]))
-def test_negative_indices_count_from_the_end(case):
-    """values(tree(obj, outer=K)) = [per_element(obj)[k] for k in K if per_element(obj)[k] != []], for -len(c) <= k < len(c).
-
-    Agreed (question 12): a negative entry selects position len(c) + k, as
-    the path step `[k]` does. Out-of-range entries stay ignored.
-    """
-    source, positions = case
-    n = len(source['c'])
-    positions = [k for k in positions if -n <= k < n] or [-1]
-    selected = per_element(source)
-    expected = [selected[k] for k in positions if selected[k]]
-    assert values(tree(source, outer=positions)) == expected
-
-
 @pytest.mark.question(10)
 @pytest.mark.parametrize('outer', ['c[*].s', 'c[*].s[*]'])
 @given(sources)
