@@ -13,15 +13,12 @@ from .strategies import malformed, pipelines, splits, trees
 
 
 @pytest.mark.question(2)
-@pytest.mark.xfail(strict=True, reason='negative out-of-range index pads the list')
 @given(pipelines(min_index=-3))
 @example(({'a': [1, 2]}, PathStr('a[-3]')))
 def test_get_does_not_mutate_source(case):
     """obj after Path(p).get_data(obj) = obj before: reading has no effect on the object.
 
-    Agreed (question 2). Fails for a negative index past the start, which
-    `visit_index` pads in search mode: Path(a[-3]).get_data({a: [1, 2]}) = 1
-    and leaves {a: [1, 2, {}]}.
+    Agreed (question 2).
     """
     obj, path = case
     before = deepcopy(obj)
