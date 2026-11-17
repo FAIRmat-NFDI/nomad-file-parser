@@ -25,12 +25,9 @@ dense = st.lists(
 ).map(lambda c: {'c': [{'s': [{'e': e} for e in s]} for s in c]})
 
 
-def section(target: str, source: str, mappers: list, indices: list[int] | None):
-    """The spec of a section mapper; `indices=None` leaves the key unset."""
-    spec = dict(target=target, source=source, mapper=mappers)
-    if indices is not None:
-        spec['indices'] = indices
-    return spec
+def section(target: str, source: str, mappers: list, *, repeats: bool) -> dict[str, Any]:
+    """The spec of a section mapper."""
+    return dict(target=target, source=source, mapper=mappers, repeats=repeats)
 
 
 def run_mapper(specs: list[dict[str, Any]], source: dict[str, Any]) -> dict[str, Any]:
@@ -40,10 +37,12 @@ def run_mapper(specs: list[dict[str, Any]], source: dict[str, Any]) -> dict[str,
     return mapper.get_data(source, SourceParser(data=source))
 
 
-def tree(source, outer: list[int] | None = [], inner: list[int] | None = []):
-    """Run the mapper C → S → E on `source`, with `indices=outer` on C and `indices=inner` on S."""
+def tree(source: dict[str, Any], *,
+        outer_repeats: bool = True, inner_repeats: bool = True) -> dict[str, Any]:
+    """Run the mapper C → S → E on `source`."""
     leaf = dict(target='E', path='.e')
-    specs = [section('C', 'c', [section('S', '.s', [leaf], inner)], outer)]
+    specs_inner = section('S', '.s', [leaf], repeats=inner_repeats)
+    specs = [section('C', 'c', [specs_inner], repeats=outer_repeats)]
     return run_mapper(specs, source)
 
 
@@ -72,7 +71,7 @@ TREE_TWO = {'C': [{'S': [{'E': 1}, {'E': 2}]}, {'S': [{'E': 3}]}]}
 
 def leaf_under(source: str) -> list[dict[str, Any]]:
     """One repeating section `S` with source `source` and the quantity `E` = `.e`."""
-    return [section('S', source, [dict(target='E', path='.e')], [])]
+    return [section('S', source, [dict(target='E', path='.e')], repeats=True)]
 
 
 @st.composite

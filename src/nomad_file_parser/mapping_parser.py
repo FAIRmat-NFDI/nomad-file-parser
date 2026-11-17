@@ -1221,6 +1221,7 @@ class BaseMapper(BaseModel):
         source: Where to read data from (path or transformer).
         target: Where to write data to (path).
         indices: Which array elements to process (list of ints or function name string).
+        repeats: Whether to retain all mapped results as a list.
         order: Execution priority (0=container/Mapper, 1=transformation/Transformer).
         remove: Whether to remove data from source after reading.
         cache: Whether to cache the transformation result.
@@ -1232,6 +1233,7 @@ class BaseMapper(BaseModel):
     indices: list[int] | str | None = Field(
         None, description="""List of indices of data to include."""
     )
+    repeats: bool = Field(False, description="""Retain mapped results as a list.""")
     order: int = Field(None, description="""Execution order.""")
     remove: bool | None = Field(None, description="""Remove data from source.""")
     cache: bool | None = Field(None, description="""Store the result of the mapper.""")
@@ -1304,6 +1306,7 @@ class BaseMapper(BaseModel):
             path: Shorthand for mapper (alternative to 'mapper' key)
             function_name, function_args: Alternative to tuple format in mapper
             indices (list[int] | str): Which array elements to process
+            repeats (bool): Keep results as a list instead of taking the first value
             remove (bool): Remove source data after reading
             cache (bool): Cache transformation results
             path_parser (str): Parser type ('jmespath' or 'jsonpath_ng')
@@ -1418,7 +1421,7 @@ class BaseMapper(BaseModel):
         else:
             logger.error('Unknown mapper type.')
 
-        for key in ['indices', 'remove', 'cache', 'update_mode']:
+        for key in ['indices', 'repeats', 'remove', 'cache', 'update_mode']:
             if dct.get(key) is not None:
                 setattr(obj, key, dct.get(key))
         if paths.get('source'):
@@ -1790,7 +1793,8 @@ class Mapper(BaseMapper, validate_assignment=True):
             **kwargs: Options passed to sub-mapper get_data methods.
 
         Returns:
-            dict[str, Any]: Dictionary mapping target paths to single transformed values.
+            dict[str, Any]: Target paths mapped to lists when repeats=True,
+                           otherwise to the first non-empty transformed value.
 
         Mapped dictionaries with an integer ``__index`` are sorted first.
         Items without one follow in their original relative order. The key is
@@ -1851,7 +1855,7 @@ class Mapper(BaseMapper, validate_assignment=True):
             if value:
                 value.sort(key=source_index)
                 dct[mapper.target.path.path] = (
-                    value[0] if mapper.indices is None else value  # TODO:xe
+                    value if mapper.repeats else value[0]
                 )
         return dct
 
@@ -2635,7 +2639,7 @@ class MetainfoParser(MappingParser):
                         section.name in self.data_object.m_def.all_sub_sections
                     )
                     mapper['target'] = f'{"" if parent_is_root else "."}{section.name}'
-                    mapper['indices'] = []
+                    mapper['repeats'] = section.repeats
                     fill_mapper(
                         mapper,
                         annotation,
@@ -2692,8 +2696,7 @@ class MetainfoParser(MappingParser):
                     sub_section_mapper['target'] = (
                         f'{"" if section == self.data_object else "."}{name}'
                     )
-                    # Repeating sub-sections use list indices, non-repeating use None
-                    sub_section_mapper['indices'] = [] if sub_section.repeats else None
+                    sub_section_mapper['repeats'] = sub_section.repeats
                     # Check if SubSection itself has annotation (for custom source paths)
                     sannotation = sub_section.m_get_annotations(
                         MAPPING_ANNOTATION_KEY, {}

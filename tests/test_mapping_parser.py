@@ -541,6 +541,7 @@ class TestMapper:
             assert m1.target == m2.target
             assert m1.remove == m2.remove
             assert m1.indices == m2.indices
+            assert m1.repeats == m2.repeats
             if isinstance(m1, Mapper):
                 for n, sm1 in enumerate(m1.mappers):
                     assert_mappers_equal(sm1, m2.mappers[n])
@@ -652,6 +653,15 @@ class TestMapper:
 
 
 class TestMappingParser:
+    def test_build_mapper_copies_subsection_repeats(self):
+        parser = MetainfoParser(data_object=ExampleSection(), annotation_key='xml')
+        mappers = {mapper.target.path.path: mapper for mapper in parser.mapper.mappers}
+
+        assert mappers['b'].repeats is True
+        assert mappers['b2'].repeats is False
+        assert mappers['b'].indices is None
+        assert mappers['b2'].indices is None
+
     @pytest.mark.parametrize(
         'file_inputs',
         [

@@ -3,7 +3,7 @@ import copy
 import pytest
 from nomad.metainfo import MSection, Quantity, SubSection
 
-from nomad_file_parser.mapping_parser import MetainfoParser, Path
+from nomad_file_parser.mapping_parser import Mapper, MetainfoParser, Path
 
 
 class Inner(MSection):
@@ -102,3 +102,20 @@ class TestVisitIndex:
         expected_source = copy.deepcopy(source)
         assert Path(path=path).get_data(source) == expected_value
         assert source == expected_source
+
+
+class TestMapperRepeatsControlsOutput:
+    @pytest.mark.parametrize('repeats', [False, True])
+    @pytest.mark.parametrize('items', [[{'value': 1}], [{'value': 1}, {'value': 2}]])
+    def test_mapper_repeats_controls_list_output(self, repeats, items):
+        spec = {
+            'source': 'items',
+            'target': 'result',
+            'mapper': [{'path': '.value', 'target': 'value'}],
+            'repeats': repeats,
+        }
+        mapper = Mapper.from_dict({'mapper': [spec]})
+        source = {'items': items}
+        assert mapper.get_data(source, MetainfoParser(data=source)) == {
+            'result': items if repeats else items[0]
+        }
