@@ -1,11 +1,11 @@
-"""Repetition: sections built from lists by nested mappers, and `indices`.
+"""Repetition: sections built from lists by nested mappers.
 
-`tree(obj, outer=K, inner=L)` runs the mapper `C` (source `c`, `indices=K`) →
-`S` (source `.s`, `indices=L`) → `E` (path `.e`) on `obj` with
-`Mapper.get_data` (`trees.py`); both default to `[]`, which requests every
-element as a list, and `None` requests a single value. `values(result)` reads
-the `E` values of a result as nested lists. `per_element(obj)[n]` is
-Path(s[*].e).get_data(obj[c][n]), or [] where that is None.
+`tree(obj, outer_repeats=True, inner_repeats=True)` runs the mapper
+`C` (source `c`) → `S` (source `.s`) → `E` (path `.e`) on `obj`
+with `Mapper.get_data` (`trees.py`). `{outer,inner}_repeats=True`
+requests every element as a list, and `False` requests a single value.
+`values(result)` reads the `E` values of a result as nested lists.
+`per_element(obj)[n]` is Path(s[*].e).get_data(obj[c][n]), or [] where that is None.
 """
 
 import pytest
@@ -48,7 +48,7 @@ def test_nested_sections_follow_joined_path(source):
 
 @given(sources)
 def test_unindexed_outer_takes_first(source):
-    """tree(obj, outer=None) = {C: tree(obj)[C][0]}, or {} when tree(obj) has no `C`.
+    """tree(obj, outer_repeats=False) = {C: tree(obj)[C][0]}, or {} when tree(obj) has no `C`.
 
     A non-repeating section fed a list keeps its first non-empty element and
     drops the others (question 7, confirmed as intended); `{}` when there is
@@ -56,18 +56,18 @@ def test_unindexed_outer_takes_first(source):
     """
     repeats = tree(source).get('C', [])
     expected = {'C': repeats[0]} if repeats else {}
-    assert tree(source, outer=None) == expected
+    assert tree(source, outer_repeats=False) == expected
 
 
 @given(sources)
 def test_unindexed_inner_takes_first(source):
-    """tree(obj, inner=None)[C] = [{S: {E: l[0]}} for l in values(tree(obj))].
+    """tree(obj, inner_repeats=False)[C] = [{S: {E: l[0]}} for l in values(tree(obj))].
 
     The same rule one level down: each calculation keeps its first step with
     a leaf, not a list of them (question 7).
     """
     expected = [{'S': {'E': inner[0]}} for inner in values(tree(source))]
-    assert tree(source, inner=None).get('C', []) == expected
+    assert tree(source, inner_repeats=False).get('C', []) == expected
 
 
 def unwrap(source: dict) -> dict:
