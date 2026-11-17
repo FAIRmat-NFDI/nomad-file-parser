@@ -1220,7 +1220,7 @@ class BaseMapper(BaseModel):
     Attributes:
         source: Where to read data from (path or transformer).
         target: Where to write data to (path).
-        indices: Which array elements to process (list of ints or function name string).
+        repeats: Whether to retain all mapped results as a list.
         order: Execution priority (0=container/Mapper, 1=transformation/Transformer).
         remove: Whether to remove data from source after reading.
         cache: Whether to cache the transformation result.
@@ -1229,9 +1229,7 @@ class BaseMapper(BaseModel):
 
     source: 'Data' = Field(None, description="""Source data.""")
     target: 'Data' = Field(None, description="""Target data.""")
-    indices: list[int] | str | None = Field(
-        None, description="""List of indices of data to include."""
-    )
+    repeats: bool = Field(False, description="""Retain mapped results as a list.""")
     order: int = Field(None, description="""Execution order.""")
     remove: bool | None = Field(None, description="""Remove data from source.""")
     cache: bool | None = Field(None, description="""Store the result of the mapper.""")
@@ -1303,7 +1301,7 @@ class BaseMapper(BaseModel):
                 - [dict, ...]: Creates nested Mapper with sub-mappers
             path: Shorthand for mapper (alternative to 'mapper' key)
             function_name, function_args: Alternative to tuple format in mapper
-            indices (list[int] | str): Which array elements to process
+            repeats (bool): Keep results as a list instead of taking the first value
             remove (bool): Remove source data after reading
             cache (bool): Cache transformation results
             path_parser (str): Parser type ('jmespath' or 'jsonpath_ng')
@@ -1418,7 +1416,7 @@ class BaseMapper(BaseModel):
         else:
             logger.error('Unknown mapper type.')
 
-        for key in ['indices', 'remove', 'cache', 'update_mode']:
+        for key in ['repeats', 'remove', 'cache', 'update_mode']:
             if dct.get(key) is not None:
                 setattr(obj, key, dct.get(key))
         if paths.get('source'):
@@ -1619,13 +1617,13 @@ class Mapper(BaseMapper, validate_assignment=True):
     """Composite mapper containing multiple sub-mappers with orchestrated execution.
 
     Executes a list of sub-mappers (Transformer or nested Mapper instances) to
-    transform source data into a target dictionary. Supports caching, filtering
-    by indices, and automatic path dependency tracking for optimized data removal.
+    transform source data into a target dictionary. Supports caching, explicit
+    repetition, and automatic path dependency tracking for optimized data removal.
 
     The Mapper acts as a container coordinating:
     - Sequential execution of sub-mappers (sorted by order if needed)
     - Caching of transformation results to avoid redundant computation
-    - Filtering of array data by indices
+    - Repeating output controlled by the repeats field
     - Aggregation of results into a target dictionary
 
     Attributes:
@@ -1770,17 +1768,16 @@ class Mapper(BaseMapper, validate_assignment=True):
         """Execute all sub-mappers and aggregate results into a dictionary.
 
         Iterates through sub-mappers, executing each one and collecting results.
-        Handles caching, array iteration, indices filtering, and empty value detection.
+        Handles caching, array iteration, and empty value detection.
 
         Execution flow for each sub-mapper:
         1. Determine source data (from mapper.source or use parent source_data)
         2. Check cache if mapper.source.transformer.cache=True
         3. Iterate over source data if it's a list, otherwise treat as single item
         4. Execute mapper.get_data() for each item (RECURSIVE for nested Mappers)
-        5. Filter by indices if specified (can be list or function name on parser)
-        6. Skip empty values (None, [], {}, empty arrays)
-        7. Normalize and aggregate non-empty values
-        8. Store result at mapper.target.path in output dictionary
+        5. Skip empty values (None, [], {}, empty arrays)
+        6. Normalize and aggregate non-empty values
+        7. Store result at mapper.target.path in output dictionary
 
         Recursion: When a sub-mapper is a `Mapper`, step 4 recursively calls this
         method, creating a tree-like execution structure for deeply nested mappings.
@@ -1791,8 +1788,8 @@ class Mapper(BaseMapper, validate_assignment=True):
             **kwargs: Options passed to sub-mapper get_data methods.
 
         Returns:
-            dict[str, Any]: Dictionary mapping target paths to transformed values.
-                           Single values if indices=None, lists if indices specified.
+            dict[str, Any]: Target paths mapped to lists when repeats=True,
+                           otherwise to the first non-empty transformed value.
 
         Mapped dictionaries with an integer ``__index`` are sorted first.
         Items without one follow in their original relative order. The key is
@@ -1815,14 +1812,6 @@ class Mapper(BaseMapper, validate_assignment=True):
                             mapper.source.transformer.function_name, data
                         )
 
-            # Resolve indices: can be direct list or parser attribute name
-            indices = mapper.indices
-            if isinstance(indices, str):
-                # Fetch attribute from parser (e.g., 'atom_indices')
-                indices = getattr(parser, indices, [])
-                if callable(indices):
-                    indices = indices()
-
             # Check transformer result cache
             value: list[Any] = []
             if isinstance(mapper, Transformer) and mapper.cache:
@@ -1832,14 +1821,12 @@ class Mapper(BaseMapper, validate_assignment=True):
             if not value:
                 for n, d in enumerate(data if isinstance(data, list) else [data]):
                     v = mapper.get_data(d, parser, **kwargs)
-                    # Filter by indices if specified (only include matching positions)
-                    if indices and n not in indices:
-                        continue
                     if isinstance(d, dict) and isinstance(v, dict) and '__index' in d:
                         v = {**v, '__index': d['__index']}
                     # Filter out empty values
                     if not is_not_value(v):
                         value.append(v)
+
                 # Populate transformer result cache
                 if value and mapper.cache and isinstance(mapper, Transformer):
                     self.__cache.setdefault(mapper.function_name, value)
@@ -1863,7 +1850,7 @@ class Mapper(BaseMapper, validate_assignment=True):
             if value:
                 value.sort(key=source_index)
                 dct[mapper.target.path.path] = (
-                    value[0] if mapper.indices is None else value
+                    value if mapper.repeats else value[0]
                 )
         return dct
 
@@ -2639,7 +2626,7 @@ class MetainfoParser(MappingParser):
                                 fill_mapper(
                                     section_mapper,
                                     annotation,
-                                    ['remove', 'cache', 'path_parser', 'indices'],
+                                    ['remove', 'cache', 'path_parser'],
                                 )
                                 mapper['mappers'].append(section_mapper)
                 if mapper.get('mappers', []):
@@ -2647,7 +2634,7 @@ class MetainfoParser(MappingParser):
                         section.name in self.data_object.m_def.all_sub_sections
                     )
                     mapper['target'] = f'{"" if parent_is_root else "."}{section.name}'
-                    mapper['indices'] = []
+                    mapper['repeats'] = section.repeats
                     fill_mapper(
                         mapper,
                         annotation,
@@ -2704,8 +2691,7 @@ class MetainfoParser(MappingParser):
                     sub_section_mapper['target'] = (
                         f'{"" if section == self.data_object else "."}{name}'
                     )
-                    # Repeating sub-sections use list indices, non-repeating use None
-                    sub_section_mapper['indices'] = [] if sub_section.repeats else None
+                    sub_section_mapper['repeats'] = sub_section.repeats
                     # Check if SubSection itself has annotation (for custom source paths)
                     sannotation = sub_section.m_get_annotations(
                         MAPPING_ANNOTATION_KEY, {}
@@ -2715,7 +2701,7 @@ class MetainfoParser(MappingParser):
                         fill_mapper(
                             sub_section_mapper,
                             sannotation,
-                            ['remove', 'cache', 'path_parser', 'indices'],
+                            ['remove', 'cache', 'path_parser'],
                         )
                 if sub_section_mapper:
                     mapper['mapper'].append(sub_section_mapper)

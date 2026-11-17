@@ -1,11 +1,11 @@
-"""Repetition: sections built from lists by nested mappers, and `indices`.
+"""Repetition: sections built from lists by nested mappers.
 
-`tree(obj, outer=K, inner=L)` runs the mapper `C` (source `c`, `indices=K`) →
-`S` (source `.s`, `indices=L`) → `E` (path `.e`) on `obj` with
-`Mapper.get_data` (`trees.py`); both default to `[]`, which requests every
-element as a list, and `None` requests a single value. `values(result)` reads
-the `E` values of a result as nested lists. `per_element(obj)[n]` is
-Path(s[*].e).get_data(obj[c][n]), or [] where that is None.
+`tree(obj, outer_repeats=True, inner_repeats=True)` runs the mapper
+`C` (source `c`) → `S` (source `.s`) → `E` (path `.e`) on `obj`
+with `Mapper.get_data` (`trees.py`). `{outer,inner}_repeats=True`
+requests every element as a list, and `False` requests a single value.
+`values(result)` reads the `E` values of a result as nested lists.
+`per_element(obj)[n]` is Path(s[*].e).get_data(obj[c][n]), or [] where that is None.
 """
 
 import pytest
@@ -18,8 +18,6 @@ from .trees import (
     JOINED,
     TWO,
     dense,
-    index_lists,
-    indexed,
     leaf_under,
     per_element,
     run_mapper,
@@ -48,7 +46,7 @@ def test_nested_sections_follow_joined_path(source):
 
 @given(sources)
 def test_unindexed_outer_takes_first(source):
-    """tree(obj, outer=None) = {C: tree(obj)[C][0]}, or {} when tree(obj) has no `C`.
+    """tree(obj, outer_repeats=False) = {C: tree(obj)[C][0]}, or {} when tree(obj) has no `C`.
 
     A non-repeating section fed a list keeps its first non-empty element and
     drops the others (question 7, confirmed as intended); `{}` when there is
@@ -56,18 +54,18 @@ def test_unindexed_outer_takes_first(source):
     """
     repeats = tree(source).get('C', [])
     expected = {'C': repeats[0]} if repeats else {}
-    assert tree(source, outer=None) == expected
+    assert tree(source, outer_repeats=False) == expected
 
 
 @given(sources)
 def test_unindexed_inner_takes_first(source):
-    """tree(obj, inner=None)[C] = [{S: {E: l[0]}} for l in values(tree(obj))].
+    """tree(obj, inner_repeats=False)[C] = [{S: {E: l[0]}} for l in values(tree(obj))].
 
     The same rule one level down: each calculation keeps its first step with
     a leaf, not a list of them (question 7).
     """
     expected = [{'S': {'E': inner[0]}} for inner in values(tree(source))]
-    assert tree(source, inner=None).get('C', []) == expected
+    assert tree(source, inner_repeats=False).get('C', []) == expected
 
 
 def unwrap(source: dict) -> dict:
@@ -91,61 +89,6 @@ def test_repeating_section_reads_a_dict_as_one_element(source):
     level.
     """
     assert tree(unwrap(source)) == tree(source)
-
-
-@given(indexed())
-def test_indices_are_source_positions(case):
-    """values(tree(obj, outer=K)) = [l for n, l in enumerate(per_element(obj)) if n in K and l != []].
-
-    For a sorted `K` without repeats. `indices` select by position in the
-    source first, and only then are empty elements dropped: a position in
-    `K` counts the input, not the output (question 8, answered).
-    """
-    source, positions = case
-    expected = [
-        inner for n, inner in enumerate(per_element(source)) if n in positions and inner
-    ]
-    assert values(tree(source, outer=positions)) == expected
-
-
-@pytest.mark.question(11)
-@pytest.mark.xfail(strict=True, reason='indices ignore their order and repeats')
-@given(index_lists())
-@example((TWO, [1, 0]))
-@example((TWO, [0, 0]))
-def test_indices_keep_order_and_repeats(case):
-    """values(tree(obj, outer=K)) = [per_element(obj)[k] for k in K if per_element(obj)[k] != []], for 0 <= k < len(c).
-
-    Agreed (question 11): `indices` select like a JMESPath multi-select
-    `[c[k1], c[k2], …]`, in the order given and with repeats. Fails today:
-    they act as a set, so the result keeps source order and a repeated
-    position appears once.
-    """
-    source, positions = case
-    n = len(source['c'])
-    positions = [k for k in positions if 0 <= k < n] or [0]
-    selected = per_element(source)
-    expected = [selected[k] for k in positions if selected[k]]
-    assert values(tree(source, outer=positions)) == expected
-
-
-@pytest.mark.question(12)
-@pytest.mark.xfail(strict=True, reason='negative indices select nothing')
-@given(index_lists())
-@example((TWO, [-1]))
-def test_negative_indices_count_from_the_end(case):
-    """values(tree(obj, outer=K)) = [per_element(obj)[k] for k in K if per_element(obj)[k] != []], for -len(c) <= k < len(c).
-
-    Agreed (question 12): a negative entry selects position len(c) + k, as
-    the path step `[k]` does. Out-of-range entries stay ignored. Fails today:
-    a negative entry selects nothing.
-    """
-    source, positions = case
-    n = len(source['c'])
-    positions = [k for k in positions if -n <= k < n] or [-1]
-    selected = per_element(source)
-    expected = [selected[k] for k in positions if selected[k]]
-    assert values(tree(source, outer=positions)) == expected
 
 
 @pytest.mark.question(10)
