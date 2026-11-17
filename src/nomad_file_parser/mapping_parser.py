@@ -2429,7 +2429,7 @@ class MetainfoParser(MappingParser):
 
     def __init__(self, **kwargs):
         self._annotation_key: str = kwargs.get('annotation_key', 'mapping')
-        self._warned_unknown_keys: set[tuple[str, str]] = set()
+        self._warned_unknown_keys: list[tuple[str, str]] = []
         self.max_nested_level: int = 3
         super().__init__(**kwargs)
 
@@ -2482,16 +2482,14 @@ class MetainfoParser(MappingParser):
         if root is None:
             root = self.data_object
 
+        warning_keys = []
         for key, val in dct.items():
             if not hasattr(root, key):
+                # Remember unresolved keys to emit warnings after iteration
                 resolved_type = root.m_def.qualified_name()
                 warning_key = (key, resolved_type)
-                # Warn once per key and resolved type for this parser instance.
-                if warning_key not in self._warned_unknown_keys:
-                    self.logger.warning(
-                        f'Unknown key {key!r} for resolved type {resolved_type!r}; skipping'
-                    )
-                    self._warned_unknown_keys.add(warning_key)
+                if warning_key not in warning_keys:
+                    warning_keys.append(warning_key)
                 continue
 
             section = getattr(root.m_def.section_cls, key)
@@ -2559,6 +2557,15 @@ class MetainfoParser(MappingParser):
                 root.m_set(root.m_get_quantity_definition(key), val)
             except Exception:
                 pass
+
+        for warning_key in warning_keys:
+            if warning_key not in self._warned_unknown_keys:
+                self._warned_unknown_keys.append(warning_key)
+                key, resolved_type = warning_key
+                self.logger.warning(
+                    f'Unknown key {key!r} for resolved type {resolved_type!r}; skipping'
+                )
+
 
     def build_mapper(self, max_level: int | None = None) -> BaseMapper:
         """Build mapper tree from metainfo annotations on data_object schema.
