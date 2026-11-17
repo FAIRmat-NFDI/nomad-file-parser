@@ -1220,7 +1220,6 @@ class BaseMapper(BaseModel):
     Attributes:
         source: Where to read data from (path or transformer).
         target: Where to write data to (path).
-        indices: Which array elements to process (list of ints or function name string).
         repeats: Whether to retain all mapped results as a list.
         order: Execution priority (0=container/Mapper, 1=transformation/Transformer).
         remove: Whether to remove data from source after reading.
@@ -1230,9 +1229,6 @@ class BaseMapper(BaseModel):
 
     source: 'Data' = Field(None, description="""Source data.""")
     target: 'Data' = Field(None, description="""Target data.""")
-    indices: list[int] | str | None = Field(
-        None, description="""List of indices of data to include."""
-    )
     repeats: bool = Field(False, description="""Retain mapped results as a list.""")
     order: int = Field(None, description="""Execution order.""")
     remove: bool | None = Field(None, description="""Remove data from source.""")
@@ -1305,7 +1301,6 @@ class BaseMapper(BaseModel):
                 - [dict, ...]: Creates nested Mapper with sub-mappers
             path: Shorthand for mapper (alternative to 'mapper' key)
             function_name, function_args: Alternative to tuple format in mapper
-            indices (list[int] | str): Which array elements to process
             repeats (bool): Keep results as a list instead of taking the first value
             remove (bool): Remove source data after reading
             cache (bool): Cache transformation results
@@ -1421,7 +1416,7 @@ class BaseMapper(BaseModel):
         else:
             logger.error('Unknown mapper type.')
 
-        for key in ['indices', 'repeats', 'remove', 'cache', 'update_mode']:
+        for key in ['repeats', 'remove', 'cache', 'update_mode']:
             if dct.get(key) is not None:
                 setattr(obj, key, dct.get(key))
         if paths.get('source'):
@@ -1622,13 +1617,13 @@ class Mapper(BaseMapper, validate_assignment=True):
     """Composite mapper containing multiple sub-mappers with orchestrated execution.
 
     Executes a list of sub-mappers (Transformer or nested Mapper instances) to
-    transform source data into a target dictionary. Supports caching, filtering
-    by indices, and automatic path dependency tracking for optimized data removal.
+    transform source data into a target dictionary. Supports caching, explicit
+    repetition, and automatic path dependency tracking for optimized data removal.
 
     The Mapper acts as a container coordinating:
     - Sequential execution of sub-mappers (sorted by order if needed)
     - Caching of transformation results to avoid redundant computation
-    - Filtering of array data by indices
+    - Repeating output controlled by the repeats field
     - Aggregation of results into a target dictionary
 
     Attributes:
@@ -2631,7 +2626,7 @@ class MetainfoParser(MappingParser):
                                 fill_mapper(
                                     section_mapper,
                                     annotation,
-                                    ['remove', 'cache', 'path_parser', 'indices'],
+                                    ['remove', 'cache', 'path_parser'],
                                 )
                                 mapper['mappers'].append(section_mapper)
                 if mapper.get('mappers', []):
@@ -2706,7 +2701,7 @@ class MetainfoParser(MappingParser):
                         fill_mapper(
                             sub_section_mapper,
                             sannotation,
-                            ['remove', 'cache', 'path_parser', 'indices'],
+                            ['remove', 'cache', 'path_parser'],
                         )
                 if sub_section_mapper:
                     mapper['mapper'].append(sub_section_mapper)
