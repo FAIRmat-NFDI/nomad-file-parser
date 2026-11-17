@@ -11,7 +11,7 @@ Behaviour whose intent is unclear is pinned as it is today and asked about in [`
 | `test_steps.py` | the steps `Path` reimplements: fields (including a field on a list), indices and slices | 1, 2, 3 |
 | `test_errors.py` | malformed, relative and out-of-range input: purity of reads, functions, `default` | 2, 4, 5, 6 |
 | `test_parent_paths.py` | relative paths `.q` under a parent path `p`, and `.@` | |
-| `test_repetition.py` | sections built from lists by nested mappers, and `indices` | 7 to 12 |
+| `test_repetition.py` | sections built from lists by nested mappers, controlled by `repeats` | 7 to 10 |
 | `test_subclasses.py` | which subclass the parser creates, and how `m_def` is resolved | 14, 15, 17, 19 |
 | `test_passes.py` | several passes over one archive under `append`, `merge`, `replace` | 13, 16, 18 |
 | `test_machinery.py` | a check on the generator, not on the parser | |
@@ -60,7 +60,7 @@ Pinned cases are listed with their expected value per case.
 | `p[:i]`, `p[i:]` | the first `i` steps of `p`, and the remaining ones |
 | `P(…)` | the share of generated cases with a property |
 
-The mapper laws name the helpers that run the mapper: `tree(obj, outer=K, inner=L)` runs the mapper tree `C` → `S` → `E` with `indices=K` on `C` and `indices=L` on `S`, and `values(…)` reads its `E` values as nested lists (`trees.py`); `convert(passes, update_mode)` runs the `MetainfoParser` once per `(key, x)` pass on one `Drawing`, and `summary(sections)` lists the type and set values of each section (`shapes.py`).
+The mapper laws name the helpers that run the mapper: `tree(obj, outer_repeats=True, inner_repeats=True)` runs the mapper tree `C` → `S` → `E` with repetition controlled separately for `C` and `S`, and `values(…)` reads its `E` values as nested lists (`trees.py`); `convert(passes, update_mode)` runs the `MetainfoParser` once per `(key, x)` pass on one `Drawing`, and `summary(sections)` lists the type and set values of each section (`shapes.py`).
 
 ## Standard JMESPath behaviour (not tested here)
 

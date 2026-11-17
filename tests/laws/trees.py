@@ -56,14 +56,6 @@ def per_element(source: dict[str, Any]) -> list[list[Any]]:
     return [Path(path='s[*].e').get_data(c) or [] for c in source['c']]
 
 
-@st.composite
-def indexed(draw):
-    """A source with at least one calculation and a non-empty subset K of its positions."""
-    source = draw(sources.filter(lambda x: x['c']))
-    positions = st.integers(0, len(source['c']) - 1)
-    return source, sorted(draw(st.sets(positions, min_size=1)))
-
-
 TWO = {'c': [{'s': [{'e': 1}, {'e': 2}]}, {'s': [{'e': 3}]}]}
 GAP = {'c': [{'s': [{'e': 1}, {'e': 2}]}, {'s': []}, {'s': [{'e': 3}]}]}
 TREE_TWO = {'C': [{'S': [{'E': 1}, {'E': 2}]}, {'S': [{'E': 3}]}]}
@@ -72,15 +64,3 @@ TREE_TWO = {'C': [{'S': [{'E': 1}, {'E': 2}]}, {'S': [{'E': 3}]}]}
 def leaf_under(source: str) -> list[dict[str, Any]]:
     """One repeating section `S` with source `source` and the quantity `E` = `.e`."""
     return [section('S', source, [dict(target='E', path='.e')], repeats=True)]
-
-
-@st.composite
-def index_lists(draw):
-    """A source with at least one calculation and a non-empty list K of integers.
-
-    K is unordered, may repeat entries, and may hold negative or out-of-range
-    positions (from -3 to len + 2).
-    """
-    source = draw(sources.filter(lambda x: x['c']))
-    n = len(source['c'])
-    return source, draw(st.lists(st.integers(-3, n + 2), min_size=1, max_size=5))

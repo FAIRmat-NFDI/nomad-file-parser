@@ -18,8 +18,6 @@ from .trees import (
     JOINED,
     TWO,
     dense,
-    index_lists,
-    indexed,
     leaf_under,
     per_element,
     run_mapper,

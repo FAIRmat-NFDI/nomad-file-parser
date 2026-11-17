@@ -87,7 +87,8 @@ Questions 9 to 12 were run on `test/pbt-path-laws` at `38ed0c8`, on the source `
    The open points are the two middle rows: should a source whose value is a list of lists be rejected or warned about rather than cut silently to the first inner element, and if it is kept, should the mapper take the first element while a field on a list in `Path` takes the last?
 
    **Open, two positions:** the nesting depth should follow the schema, not the shape of the data, so that a schema can cast a source into the shape it needs without a reshaping function; and, from the other side, a single object under a repeating subsection should be read as a list (question 7). To be investigated further.
-11. **`indices=[]` means "all elements, as a list".**
+11. **`indices=[]` means "all elements, as a list" (historical).**
+   **Update:** the mapper `indices` option has been removed. `repeats` controls output cardinality, and source paths select elements. The description below records the former behavior; questions 11 and 12 no longer apply to the mapper API.
    `indices` is a field of `Mapper` (`mapping_parser.py`, `indices: list[int] | str | None`) and of the mapping annotation (`nomad.datamodel.metainfo.annotations.Mapper.indices`), where a string names a function or attribute of the parser that yields the list.
    It selects elements of a list source by position, and its value also decides the shape of the result:
 

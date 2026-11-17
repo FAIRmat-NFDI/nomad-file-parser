@@ -92,6 +92,7 @@ class Program(general.Program):
 ### Controlling Repeating Sections
 
 **Subsections** that are defined as **repeating** in the schema are automatically picked up by the mapping parser.
+Select individual source elements using the source path, for example `items[1]` or `items[::2]`; mappers no longer have an `indices` option.
 For manually constructed mappers, set `repeats=True` to retain the mapped results as a list.
 The default, `repeats=False`, keeps only the first non-empty result.
 It will look for any repeating units along the path and instantiate the same number of subsections, i.e. $\text{no. subsections} = \prod_{\text{segments}} \text{repeating path segment}$.
