@@ -140,7 +140,6 @@ def test_element_keeps_only_fields_of_its_type(kind, name, fields):
 
 
 @pytest.mark.question(17)
-@pytest.mark.xfail(strict=True, reason='falsy values count as empty in from_dict')
 @given(
     st.sampled_from(KINDS),
     st.sampled_from([0.0, 1.0]),
@@ -151,8 +150,6 @@ def test_falsy_values_are_data(kind, value, name):
 
     Agreed (question 17): `0.0` and `''` are data, as they are for the
     mapper (`is_not_value`), so an element holding only falsy values is kept.
-    Fails today: `from_dict` treats them as empty (`or v`) and drops the
-    element.
     """
     element = {
         'm_def': qualified(kind),
