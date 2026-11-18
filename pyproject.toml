@@ -43,6 +43,7 @@ Repository = "https://github.com/FAIRmat-NFDI/nomad-file-parser"
 dev = [
     "ruff",
     "pytest",
+    "hypothesis>=6.100,<7",
     "structlog",
     "nomad-lab>=1.3.16.dev100",
 ]
