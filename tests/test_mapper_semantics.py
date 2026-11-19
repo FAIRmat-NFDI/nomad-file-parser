@@ -17,6 +17,8 @@ class TestPathWithFunction:
             ('length(.a.b)', None, {'a': {'b': [1, 2]}}, 'length(a.b)', 2),
             ('length(.b)', 'a', {'a': {'b': [1, 2]}}, 'length(a.b)', 2),
             ('not_null(.n)', None, {'n': None}, 'not_null(n)', None),
+            ('.a.b | length(@)', None, {'a': {'b': [1, 2]}}, 'a.b | length(@)', 2),
+            ('.b | length(@)', 'a', {'a': {'b': [1, 2]}}, 'a.b | length(@)', 2),
         ],
     )
     def test_function_relative_argument_current_behavior(self, query, parent, source, absolute_path, expected_value):
