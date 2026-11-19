@@ -2540,6 +2540,7 @@ class MetainfoParser(MappingParser):
                 # Remove empty sub-sections in reverse order to avoid index shifts
                 for n in reversed(empty_indices):
                     root.m_remove_sub_section(section, index=n)
+                    val_list.pop(n)
                 continue
 
             if key == 'm_def':
