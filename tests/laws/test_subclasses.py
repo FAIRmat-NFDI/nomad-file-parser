@@ -119,10 +119,9 @@ def test_unresolvable_m_def_raises(m_def, name, fields):
 def test_element_keeps_only_fields_of_its_type(kind, name, fields):
     """from_dict_shapes([{m_def: X, **fields}]) = [(X, fields restricted to X)], or [] if none are left.
 
-    Today's behaviour: a field of another subclass is dropped without a
-    warning (`m_set` fails inside a bare `except`); if no field of `X` or of
-    the base is left, the element is dropped as empty. It should not fail
-    silently; whether it raises or warns is open (question 15).
+    A field of another subclass is skipped with a warning, once per key and
+    resolved type per parser. If no field of `X` or of the base is left,
+    the element is dropped as empty.
     """
     element = {
         'm_def': qualified(kind),
