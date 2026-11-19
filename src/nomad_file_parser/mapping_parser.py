@@ -222,7 +222,7 @@ Maps the first 3 bytes of a file to (extension, open_function) tuples for gzip, 
 """
 
 
-function_call_re : re.Pattern = re.compile(r'([^()]+)\((.*)\)')
+function_call_re : re.Pattern = re.compile(r'(\w+)\((.*)\)')
 dot_in_beginning_re : re.Pattern = re.compile(r'(?:^|(?<=\s))\.')
 """Regex patterns for parsing function calls and leading dots in paths."""
 
