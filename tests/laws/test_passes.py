@@ -59,35 +59,25 @@ def test_merge_across_subclasses_keeps_first(kinds, data):
 
 
 @pytest.mark.question(13)
-@given(st.permutations(KINDS), full_shape_data)
-@example([Circle, Square, Triangle], {'radius': 1.0, 'side': 2.0, 'height': 3.0})
-def test_merge_leaves_unaddressed_sections(kinds, data):
-    """summary(convert([(k1, x), (k2, x)], 'merge').shapes)[1:] = built(K1, x)[1:] for two subclasses under k1, one under k2.
-
-    Agreed: a `merge` pass changes only the positions it addresses. The
-    second pass maps one element, so only position 0 is merged and the
-    second subclass of the first pass keeps its field.
-    """
-    first_pass, second_pass = set(kinds[:2]), kinds[2]
-    annotate(
-        {(kind, 'k1') for kind in first_pass} | {(second_pass, 'k2')},
-        update_mode='merge',
-    )
-    drawing = convert([('k1', data), ('k2', data)], update_mode='merge')
-    assert summary(drawing.shapes)[1:] == built(first_pass, data)[1:]
-
-
-merge_modes = st.sampled_from(
-    ['merge', 'merge@start', 'merge@last', 'merge@-1', 'merge@-2', 'merge@-3']
+@pytest.mark.parametrize(
+    'mode',
+    [
+        'merge',
+        'merge@start',
+        'merge@last',
+        'merge@end',
+        'merge@-1',
+        'merge@-2',
+        'merge@-3',
+    ],
 )
-first_pass_sizes = st.integers(1, 2)
-
-@pytest.mark.question(13)
-@given(merge_modes, st.permutations(KINDS), first_pass_sizes, full_shape_data)
+@given(st.permutations(KINDS), st.integers(1, 2), full_shape_data)
+@example([Circle, Square, Triangle], 2, {'radius': 1.0, 'side': 2.0, 'height': 3.0})
 def test_merge_leaves_unaddressed_sections(mode, kinds, size, data):
-    """A `merge` pass with one section of another subclass leaves the first pass as it was.
+    """summary(convert([(k1, x), (k2, x)], mode).shapes)[:n] = built(K1, x), for n subclasses under k1.
 
-    summary(convert([(k1, x), (k2, x)], mode).shapes)[:n] = built(K1, x), for n subclasses under k1.
+    Unaddressed sections keep their fields. Where the second pass overlaps
+    a first-pass section, the existing subclass and its fields win.
     """
     first_pass, second_pass = set(kinds[:size]), kinds[size]
     annotate(
