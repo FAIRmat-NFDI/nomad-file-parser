@@ -1076,7 +1076,10 @@ class Path(BaseModel, validate_assignment=True):
                     if start < 0:
                         left_overhang = min(-start, len(current_to_merge))
                         if left_overhang:
-                            incoming[:0] = current_to_merge[:left_overhang]
+                            incoming[:0] = [
+                                update(d, {}, update_mode_spec)
+                                for d in current_to_merge[:left_overhang]
+                            ]
                             current_to_merge = current_to_merge[left_overhang:]
                             start = left_overhang
 
