@@ -100,8 +100,7 @@ class TestPathWithFunction:
                 'not_null(.a, .b)',
                 'p',
                 {'p': {'a': None, 'b': 2}},
-                #'not_null(p.a, p.b)', FIXME
-                'not_null(p.a, b)',
+                'not_null(p.a, p.b)',
                 'not_null(a, b)',
                 2,
             ),
@@ -109,14 +108,13 @@ class TestPathWithFunction:
                 'not_null(.b, .a)',
                 'p',
                 {'p': {'a': None, 'b': 2}},
-                #'not_null(p.b, p.a)', FIXME
-                'not_null(p.b, a)',
+                'not_null(p.b, p.a)',
                 'not_null(b, a)',
                 2,
             ),
         ],
     )
-    def test_function_relative_argument_current_behavior(
+    def test_function_relative_argument(
         self, query, parent, source, absolute_path, relative_path, expected_value
     ):
         path = Path(path=query, parent=Path(path=parent) if parent else None)

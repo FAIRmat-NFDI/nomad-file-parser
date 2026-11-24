@@ -850,11 +850,12 @@ class Path(BaseModel, validate_assignment=True):
         derived path attributes.
 
         Computation steps:
-        1. Determine if it is a function call (e.g., 'func(.path)') and extract the inner path and the function name.
-        2. Strip leading '.' from path to get relative_path
-        3. Join parent.absolute_path with relative_path to get absolute_path
-        4. Add function name back to relative_path and absolute_path if applicable
-        5. Remove indices/filters from absolute_path to get reduced_path
+        1. Determine if it is a function call (e.g., 'func(.path)') and extract the inner path(s) and the function name.
+        2. Split function arguments by commas and process each argument to compute relative and absolute paths.
+        3. Strip leading '.' from path to get relative_path
+        4. Join parent.absolute_path with relative_path to get absolute_path
+        5. Add function name back to relative_path and absolute_path if applicable
+        6. Remove indices/filters from absolute_path to get reduced_path
 
         Validation behavior:
             - **Timing**: Runs BEFORE field assignment and type checking
@@ -884,33 +885,32 @@ class Path(BaseModel, validate_assignment=True):
         Raises:
             AttributeError: If parent is not None but lacks absolute_path attribute.
         """
+        def get_relative_absolute_paths(parent: Path, raw_path: str) -> str:
+            relative_path = dot_in_beginning_re.sub('', raw_path)
+            absolute_path = relative_path
+            if parent:
+                segments = [parent.absolute_path, absolute_path]
+                absolute_path = '.'.join([s for s in segments if s != '@' and s])
+            return relative_path, absolute_path
+
+        def merge_function_paths(function: str, paths: list[str]) -> str:
+            return f"{function}({', '.join(paths)})"
+
         relative_path_raw = values.get('path', '')
         parent = values.get('parent')
 
         match = function_call_re.fullmatch(relative_path_raw)
         if match:
-            function, relative_path = match.groups()
+            function, arguments = match.groups()
+            relative_paths, absolute_paths = list(zip(*[get_relative_absolute_paths(parent, argument.strip()) for argument in arguments.split(',')]))
+            relative_path = merge_function_paths(function, relative_paths)
+            absolute_path = merge_function_paths(function, absolute_paths) if parent else relative_path
         else:
-            function, relative_path = None, relative_path_raw
+            relative_path, absolute_path = get_relative_absolute_paths(parent, relative_path_raw)
 
-        relative_path = dot_in_beginning_re.sub('', relative_path)
-        if function:
-            values['relative_path'] = f'{function}({relative_path})'
-        else:
-            values['relative_path'] = relative_path
-
-        absolute_path = relative_path
-        if parent:
-            segments = [parent.absolute_path, absolute_path]
-            absolute_path = '.'.join([s for s in segments if s != '@' and s])
-
-        if function:
-            absolute_path = f'{function}({absolute_path})'
-
+        values['relative_path'] = relative_path
         values['absolute_path'] = absolute_path
-
         values['reduced_path'] = re.sub(r'\[.+?\]|\|', '', absolute_path)
-
         return values
 
     def is_relative_path(self) -> bool:
