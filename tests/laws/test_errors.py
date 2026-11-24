@@ -71,6 +71,45 @@ def test_relative_path_in_function_under_parent(case):
     assert Path(path=path.absolute_path).get_data(obj) == expected
 
 
+@given(
+    fields=st.dictionaries(
+        st.sampled_from('abcd'), st.none() | st.integers(), min_size=2
+    ),
+    items=st.lists(st.integers()),
+)
+@example(fields={'a': None, 'b': 2}, items=[1, 2])
+@example(fields={'b': 2, 'a': None}, items=[])
+@example(fields={'b': 2, 'a': 1}, items=[1])
+def test_relative_arguments_in_function_under_parent(fields, items):
+    """Function calls under p prefix each argument in the absolute path and agree with reads from the root."""
+    obj = {'p': {**fields, 'l': items}}
+    parent = Path(path='p')
+    parent_data = parent.get_data(obj)
+    relative_args = ', '.join(f'.{field}' for field in fields)
+    absolute_args = ', '.join(f'p.{field}' for field in fields)
+    first_non_null = next(
+        (value for value in fields.values() if value is not None), None
+    )
+    cases = (
+        (
+            f'not_null({relative_args})',
+            f'not_null({", ".join(fields)})',
+            f'not_null({absolute_args})',
+            first_non_null,
+        ),
+        ('length(.l)', 'length(l)', 'length(p.l)', len(items)),
+    )
+    for query, relative_path, absolute_path, expected in cases:
+        path = Path(path=query, parent=parent)
+        assert path.relative_path == relative_path
+        assert path.absolute_path == absolute_path
+        assert path.get_data(parent_data) == expected
+
+        root_path = Path(path=path.absolute_path)
+        assert root_path.absolute_path == absolute_path
+        assert root_path.get_data(obj) == expected
+
+
 @given(pipelines())
 def test_relative_path_piped_into_function(case):
     """Path(.p | not_null(@)).get_data(obj) = Path(p).get_data(obj): a pipe into a call keeps the path.
