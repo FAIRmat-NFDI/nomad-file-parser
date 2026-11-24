@@ -48,9 +48,9 @@ def test_relative_path_in_function(case):
     path; on {a: [1, 2]}, `length(.a)` is then 2.
     """
     obj, path = case
-    assert Path(path=f'not_null({path.relative()})').get_data(obj) == Path(
-        path=path
-    ).get_data(obj)
+    function_path = Path(path=f'not_null({path.relative()})')
+    assert function_path.relative_path == f'not_null({path})'
+    assert function_path.get_data(obj) == Path(path=path).get_data(obj)
 
 
 @pytest.mark.question(4)
@@ -65,6 +65,7 @@ def test_relative_path_in_function_under_parent(case):
     obj, (parent, child) = case
     path = Path(path=f'not_null({child.relative()})', parent=Path(path=parent))
     assert path.absolute_path == f'not_null({parent.dot(child)})'
+    assert path.relative_path == f'not_null({child})'
     expected = Path(path=parent.dot(child)).get_data(obj)
     assert path.get_data(Path(path=parent).get_data(obj)) == expected
     assert Path(path=path.absolute_path).get_data(obj) == expected
@@ -78,9 +79,9 @@ def test_relative_path_piped_into_function(case):
     handling of the relative prefix in front of a pipe.
     """
     obj, path = case
-    assert Path(path=f'{path.relative()} | not_null(@)').get_data(obj) == Path(
-        path=path
-    ).get_data(obj)
+    function_path = Path(path=f'{path.relative()} | not_null(@)')
+    assert function_path.relative_path == f'{path} | not_null(@)'
+    assert function_path.get_data(obj) == Path(path=path).get_data(obj)
 
 
 @given(splits(head_project=False, tail_field=True))
@@ -93,6 +94,7 @@ def test_relative_path_piped_into_function_under_parent(case):
     obj, (parent, child) = case
     path = Path(path=f'{child.relative()} | not_null(@)', parent=Path(path=parent))
     assert path.absolute_path == f'{parent.dot(child)} | not_null(@)'
+    assert path.relative_path == f'{child} | not_null(@)'
     expected = Path(path=parent.dot(child)).get_data(obj)
     assert path.get_data(Path(path=parent).get_data(obj)) == expected
     assert Path(path=path.absolute_path).get_data(obj) == expected
