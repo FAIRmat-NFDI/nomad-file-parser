@@ -2566,7 +2566,7 @@ class MetainfoParser(MappingParser):
                 self._warned_unknown_keys.append(warning_key)
                 key, resolved_type = warning_key
                 self.logger.warning(
-                    f'Unknown key {key!r} for resolved type {resolved_type!r}; skipping'
+                    'Unknown key %r for resolved type %r; skipping', key, resolved_type
                 )
 
 
