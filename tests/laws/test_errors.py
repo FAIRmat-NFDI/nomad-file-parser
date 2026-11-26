@@ -48,9 +48,9 @@ def test_relative_path_in_function(case):
     path; on {a: [1, 2]}, `length(.a)` is then 2.
     """
     obj, path = case
-    assert Path(path=f'not_null({path.relative()})').get_data(obj) == Path(
-        path=path
-    ).get_data(obj)
+    function_path = Path(path=f'not_null({path.relative()})')
+    assert function_path.relative_path == f'not_null({path})'
+    assert function_path.get_data(obj) == Path(path=path).get_data(obj)
 
 
 @pytest.mark.question(4)
@@ -65,9 +65,49 @@ def test_relative_path_in_function_under_parent(case):
     obj, (parent, child) = case
     path = Path(path=f'not_null({child.relative()})', parent=Path(path=parent))
     assert path.absolute_path == f'not_null({parent.dot(child)})'
+    assert path.relative_path == f'not_null({child})'
     expected = Path(path=parent.dot(child)).get_data(obj)
     assert path.get_data(Path(path=parent).get_data(obj)) == expected
     assert Path(path=path.absolute_path).get_data(obj) == expected
+
+
+@given(
+    fields=st.dictionaries(
+        st.sampled_from('abcd'), st.none() | st.integers(), min_size=2
+    ),
+    items=st.lists(st.integers()),
+)
+@example(fields={'a': None, 'b': 2}, items=[1, 2])
+@example(fields={'b': 2, 'a': None}, items=[])
+@example(fields={'b': 2, 'a': 1}, items=[1])
+def test_relative_arguments_in_function_under_parent(fields, items):
+    """Function calls under p prefix each argument in the absolute path and agree with reads from the root."""
+    obj = {'p': {**fields, 'l': items}}
+    parent = Path(path='p')
+    parent_data = parent.get_data(obj)
+    relative_args = ', '.join(f'.{field}' for field in fields)
+    absolute_args = ', '.join(f'p.{field}' for field in fields)
+    first_non_null = next(
+        (value for value in fields.values() if value is not None), None
+    )
+    cases = (
+        (
+            f'not_null({relative_args})',
+            f'not_null({", ".join(fields)})',
+            f'not_null({absolute_args})',
+            first_non_null,
+        ),
+        ('length(.l)', 'length(l)', 'length(p.l)', len(items)),
+    )
+    for query, relative_path, absolute_path, expected in cases:
+        path = Path(path=query, parent=parent)
+        assert path.relative_path == relative_path
+        assert path.absolute_path == absolute_path
+        assert path.get_data(parent_data) == expected
+
+        root_path = Path(path=path.absolute_path)
+        assert root_path.absolute_path == absolute_path
+        assert root_path.get_data(obj) == expected
 
 
 @given(pipelines())
@@ -78,9 +118,9 @@ def test_relative_path_piped_into_function(case):
     handling of the relative prefix in front of a pipe.
     """
     obj, path = case
-    assert Path(path=f'{path.relative()} | not_null(@)').get_data(obj) == Path(
-        path=path
-    ).get_data(obj)
+    function_path = Path(path=f'{path.relative()} | not_null(@)')
+    assert function_path.relative_path == f'{path} | not_null(@)'
+    assert function_path.get_data(obj) == Path(path=path).get_data(obj)
 
 
 @given(splits(head_project=False, tail_field=True))
@@ -93,6 +133,7 @@ def test_relative_path_piped_into_function_under_parent(case):
     obj, (parent, child) = case
     path = Path(path=f'{child.relative()} | not_null(@)', parent=Path(path=parent))
     assert path.absolute_path == f'{parent.dot(child)} | not_null(@)'
+    assert path.relative_path == f'{child} | not_null(@)'
     expected = Path(path=parent.dot(child)).get_data(obj)
     assert path.get_data(Path(path=parent).get_data(obj)) == expected
     assert Path(path=path.absolute_path).get_data(obj) == expected

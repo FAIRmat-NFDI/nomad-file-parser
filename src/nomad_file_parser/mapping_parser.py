@@ -14,6 +14,7 @@ import jmespath
 import jmespath.visitor
 import numpy as np
 import pint
+from jmespath.exceptions import ParseError
 from jsonpath_ng.parser import JsonPathParser
 from lxml import etree
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
@@ -222,9 +223,45 @@ Maps the first 3 bytes of a file to (extension, open_function) tuples for gzip, 
 """
 
 
-function_call_re : re.Pattern = re.compile(r'(\w+)\((.*)\)')
-dot_in_beginning_re : re.Pattern = re.compile(r'(?:^|(?<=\s))\.')
-"""Regex patterns for parsing function calls and leading dots in paths."""
+dot_in_beginning_re: re.Pattern = re.compile(r'(?:^|(?<=\s))\.')
+
+
+class _FunctionPathParser(jmespath.parser.Parser):
+    """Collect source spans while JMESPath parses mapper-relative expressions."""
+
+    def __init__(self):
+        super().__init__()
+        self.spans: dict[int, tuple[int, int]] = {}
+        self.relative_dots: set[int] = set()
+
+    def _expression(self, binding_power=0):
+        start = self._lookahead_token(0)['start']
+        if self._current_token() == 'dot':
+            self.relative_dots.add(start)
+            self._advance()
+        node = super()._expression(binding_power)
+        self.spans[id(node)] = start, self._lookahead_token(0)['start']
+        return node
+
+    def split_call(self, expression: str) -> tuple[str, list[str]] | None:
+        try:
+            # The base parse() cache can return an AST without these source spans.
+            node = self._do_parse(expression).parsed
+        except ParseError:
+            return None
+        if node['type'] != 'function_expression':
+            return None
+
+        arguments = []
+        for argument in node['children']:
+            start, end = self.spans[id(argument)]
+            text = ''.join(
+                char
+                for offset, char in enumerate(expression[start:end], start)
+                if offset not in self.relative_dots
+            )
+            arguments.append(text.strip())
+        return node['value'], arguments
 
 
 def is_not_value(value: Any) -> bool:
@@ -850,11 +887,12 @@ class Path(BaseModel, validate_assignment=True):
         derived path attributes.
 
         Computation steps:
-        1. Determine if it is a function call (e.g., 'func(.path)') and extract the inner path and the function name.
-        2. Strip leading '.' from path to get relative_path
-        3. Join parent.absolute_path with relative_path to get absolute_path
-        4. Add function name back to relative_path and absolute_path if applicable
-        5. Remove indices/filters from absolute_path to get reduced_path
+        1. Determine if it is a function call (e.g., 'func(.path)') and extract the inner path(s) and the function name.
+        2. Use the JMESPath parser to find the outer arguments and resolve nested calls.
+        3. Strip leading '.' from path to get relative_path
+        4. Join parent.absolute_path with relative_path to get absolute_path
+        5. Add function name back to relative_path and absolute_path if applicable
+        6. Remove indices/filters from absolute_path to get reduced_path
 
         Validation behavior:
             - **Timing**: Runs BEFORE field assignment and type checking
@@ -884,33 +922,36 @@ class Path(BaseModel, validate_assignment=True):
         Raises:
             AttributeError: If parent is not None but lacks absolute_path attribute.
         """
-        relative_path_raw = values.get('path', '')
         parent = values.get('parent')
 
-        match = function_call_re.fullmatch(relative_path_raw)
-        if match:
-            function, relative_path = match.groups()
-        else:
-            function, relative_path = None, relative_path_raw
+        def resolve_paths(raw_path: str, *, argument: bool = False) -> tuple[str, str]:
+            call = (
+                _FunctionPathParser().split_call(raw_path)
+                if raw_path.rstrip().endswith(')')
+                else None
+            )
+            if call is not None:
+                function, arguments = call
+                paths = [resolve_paths(arg, argument=True) for arg in arguments]
+                relative_args = ', '.join(relative for relative, _ in paths)
+                absolute_args = ', '.join(absolute for _, absolute in paths)
+                return f'{function}({relative_args})', f'{function}({absolute_args})'
 
-        relative_path = dot_in_beginning_re.sub('', relative_path)
-        if function:
-            values['relative_path'] = f'{function}({relative_path})'
-        else:
-            values['relative_path'] = relative_path
+            relative_path = raw_path if argument else dot_in_beginning_re.sub('', raw_path)
+            if argument and relative_path.startswith(("'", '`', '&')):
+                # Literals and expression references keep their evaluation context.
+                return relative_path, relative_path
+            absolute_path = relative_path
+            if parent:
+                segments = [parent.absolute_path, absolute_path]
+                absolute_path = '.'.join([s for s in segments if s != '@' and s])
+            return relative_path, absolute_path
 
-        absolute_path = relative_path
-        if parent:
-            segments = [parent.absolute_path, absolute_path]
-            absolute_path = '.'.join([s for s in segments if s != '@' and s])
+        relative_path, absolute_path = resolve_paths(values.get('path', ''))
 
-        if function:
-            absolute_path = f'{function}({absolute_path})'
-
+        values['relative_path'] = relative_path
         values['absolute_path'] = absolute_path
-
         values['reduced_path'] = re.sub(r'\[.+?\]|\|', '', absolute_path)
-
         return values
 
     def is_relative_path(self) -> bool:

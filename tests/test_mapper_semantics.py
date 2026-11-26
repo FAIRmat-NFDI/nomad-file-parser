@@ -50,22 +50,125 @@ class TestPathWithFunction:
     """tests/laws/test_errors.py::test_relative_path_in_function
     tests/laws/test_errors.py::test_relative_path_in_function_under_parent"""
     @pytest.mark.parametrize(
-        'query, parent, source, absolute_path, expected_value',
+        'query, parent, source, expected_paths, expected_value',
         [
-            ('.a.b', None, {'a': {'b': [1, 2]}}, 'a.b', [1, 2]),
-            ('.b', 'a', {'a': {'b': [1, 2]}}, 'a.b', [1, 2]),
-            ('length(.a.b)', None, {'a': {'b': [1, 2]}}, 'length(a.b)', 2),
-            ('length(.b)', 'a', {'a': {'b': [1, 2]}}, 'length(a.b)', 2),
-            ('not_null(.n)', None, {'n': None}, 'not_null(n)', None),
-            ('.a.b | length(@)', None, {'a': {'b': [1, 2]}}, 'a.b | length(@)', 2),
-            ('.b | length(@)', 'a', {'a': {'b': [1, 2]}}, 'a.b | length(@)', 2),
+            ('.a.b', None, {'a': {'b': [1, 2]}}, ('a.b', 'a.b'), [1, 2]),
+            ('.b', 'a', {'a': {'b': [1, 2]}}, ('a.b', 'b'), [1, 2]),
+            (
+                'length(.a.b)',
+                None,
+                {'a': {'b': [1, 2]}},
+                ('length(a.b)', 'length(a.b)'),
+                2,
+            ),
+            ('length(.b)', 'a', {'a': {'b': [1, 2]}}, ('length(a.b)', 'length(b)'), 2),
+            ('not_null(.n)', None, {'n': None}, ('not_null(n)', 'not_null(n)'), None),
+            (
+                '.a.b | length(@)',
+                None,
+                {'a': {'b': [1, 2]}},
+                ('a.b | length(@)', 'a.b | length(@)'),
+                2,
+            ),
+            (
+                '.b | length(@)',
+                'a',
+                {'a': {'b': [1, 2]}},
+                ('a.b | length(@)', 'b | length(@)'),
+                2,
+            ),
+            (
+                'not_null(p.a, p.b)',
+                None,
+                {'p': {'a': None, 'b': 2}},
+                ('not_null(p.a, p.b)', 'not_null(p.a, p.b)'),
+                2,
+            ),
+            (
+                'not_null(p.b, p.a)',
+                None,
+                {'p': {'a': None, 'b': 2}},
+                ('not_null(p.b, p.a)', 'not_null(p.b, p.a)'),
+                2,
+            ),
+            (
+                'not_null(.a, .b)',
+                'p',
+                {'p': {'a': None, 'b': 2}},
+                ('not_null(p.a, p.b)', 'not_null(a, b)'),
+                2,
+            ),
+            (
+                'not_null(.b, .a)',
+                'p',
+                {'p': {'a': None, 'b': 2}},
+                ('not_null(p.b, p.a)', 'not_null(b, a)'),
+                2,
+            ),
+            (
+                "length(join(', .', .names))",
+                'p',
+                {'p': {'names': ['Fe', 'O']}},
+                ("length(join(', .', p.names))", "length(join(', .', names))"),
+                6,
+            ),
+            (
+                'not_null(.missing, `[1, 2]`)',
+                'p',
+                {'p': {}},
+                ('not_null(p.missing, `[1, 2]`)', 'not_null(missing, `[1, 2]`)'),
+                [1, 2],
+            ),
+            (
+                'length([a, b])',
+                'p',
+                {'p': {'a': 1, 'b': 2}},
+                ('length(p.[a, b])', 'length([a, b])'),
+                2,
+            ),
+            (
+                'length(.items[?contains(name, `","`)])',
+                'p',
+                {'p': {'items': [{'name': 'a,b'}, {'name': 'c'}]}},
+                (
+                    'length(p.items[?contains(name, `","`)])',
+                    'length(items[?contains(name, `","`)])',
+                ),
+                1,
+            ),
+            (
+                'length(."a, .b")',
+                'p',
+                {'p': {'a, .b': [1, 2]}},
+                ('length(p."a, .b")', 'length("a, .b")'),
+                2,
+            ),
+            (
+                'length(.a | .b)',
+                'p',
+                {'p': {'a': {'b': [1, 2]}}},
+                ('length(p.a | b)', 'length(a | b)'),
+                2,
+            ),
+            (
+                'sort_by(.items, &.score)',
+                'p',
+                {'p': {'items': [{'score': 2}, {'score': 1}]}},
+                ('sort_by(p.items, &score)', 'sort_by(items, &score)'),
+                [{'score': 1}, {'score': 2}],
+            ),
         ],
     )
-    def test_function_relative_argument_current_behavior(self, query, parent, source, absolute_path, expected_value):
+    def test_function_relative_argument(
+        self, query, parent, source, expected_paths, expected_value
+    ):
+        absolute_path, relative_path = expected_paths
         path = Path(path=query, parent=Path(path=parent) if parent else None)
         assert path.absolute_path == absolute_path
+        assert path.relative_path == relative_path
         section_data = path.parent.get_data(source) if path.parent is not None else source
         assert path.get_data(section_data) == expected_value
+        assert path.parser.get_data(path.absolute_path, source) == expected_value
 
 
 class Inner(MSection):
