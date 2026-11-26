@@ -244,7 +244,7 @@ def is_not_value(value: Any) -> bool:
 
     # Check equality with common empty values
     not_value: Any
-    for not_value in [None, [], {}]:
+    for not_value in [None, [], {}, ()]:
         test = value == not_value
         # Handle numpy array comparison returning array of bools
         result = test.any() if isinstance(test, np.ndarray) else test
