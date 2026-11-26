@@ -7,7 +7,7 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from io import BytesIO
-from typing import Any, Optional, cast
+from typing import Any, ClassVar, Optional, cast
 
 import h5py
 import jmespath
@@ -254,30 +254,76 @@ class JmespathOptions(jmespath.visitor.Options):
         super().__init__(**kwargs)
 
 
-def _normalize_update_mode_spec(update_mode: Any) -> dict[str, Any]:
-    """Normalize update_mode into a nested spec dictionary."""
-    if isinstance(update_mode, dict):
-        return update_mode
-    return {'__update_mode': update_mode}
+class _MapperSpec(dict):
+    """Compiled write settings, with one dotted key per target field."""
 
+    @classmethod
+    def compile(
+        cls, update_mode: str | dict | None, mapper: Optional['BaseMapper'] = None
+    ) -> '_MapperSpec':
+        if isinstance(update_mode, cls) and mapper is None:
+            return update_mode
 
-def _get_update_mode(update_mode_spec: Any, key: str | None = None) -> Any:
-    """Return update mode or child update mode spec for a key.
+        mode = mapper.update_mode if mapper is not None else None
+        overrides = {}
+        spec = cls()
+        if isinstance(update_mode, dict):
+            mode = update_mode.get('__update_mode')
+            for key, value in update_mode.items():
+                if key == '__literal':
+                    spec[key] = value
+                elif key == '__variants':
+                    field, variants = value
+                    spec[key] = (
+                        field,
+                        {name: cls.compile(item) for name, item in variants.items()},
+                    )
+                elif key != '__update_mode':
+                    # Prefer the dotted spelling if both aliases are present.
+                    path = f'.{key.lstrip(".")}'
+                    overrides[path] = update_mode.get(path, value)
+        elif update_mode is not None:
+            mode = update_mode
+        spec['__update_mode'] = mode
+        if mapper is not None and mapper.literal:
+            spec['__literal'] = True
 
-    If key is None, return the current level mode string (or None).
-    If key is provided, return a child mode spec dict, inheriting the parent
-    mode when no explicit key-specific entry is found.
-    """
-    spec = _normalize_update_mode_spec(update_mode_spec)
-    if key is None:
-        return spec.get('__update_mode')
+        if isinstance(mapper, Mapper):
+            inherited = update_mode
+            if isinstance(update_mode, dict):
+                inherited = {'__update_mode': mode}
+            for child in mapper.mappers:
+                if child.target:
+                    key = f'.{child.target.path.path.lstrip(".")}'
+                    spec[key] = cls.compile(overrides.pop(key, inherited), child)
+            field = mapper.variant_field
+            if field and mapper._child_mappers:
+                variants = {}
+                for child in mapper:
+                    name = getattr(child, field, None)
+                    if name is not None:
+                        variants[name] = cls.compile(update_mode, child)
+                if variants:
+                    spec['__variants'] = field, variants
+        for key, override in overrides.items():
+            spec[key] = cls.compile(override)
+        return spec
 
-    normalized_key = key.lstrip('.')
-    child_spec = spec.get(normalized_key, spec.get(f'.{normalized_key}'))
-    if child_spec is not None:
-        return _normalize_update_mode_spec(child_spec)
+    def child(self, key: str) -> '_MapperSpec':
+        child = self.get(f'.{key.lstrip(".")}')
+        if child is not None:
+            return child
+        # Unmapped fields inherit only the merge mode.
+        if len(self) == 1:
+            return self
+        return _MapperSpec(__update_mode=self['__update_mode'])
 
-    return _normalize_update_mode_spec(spec.get('__update_mode'))
+    def for_record(self, record: dict) -> '_MapperSpec':
+        if '__variants' in self:
+            field, variants = self['__variants']
+            name = record.get(field) or record.get(f'.{field}')
+            return variants.get(name, self)
+        return self
 
 
 class TreeInterpreter(jmespath.visitor.TreeInterpreter):
@@ -879,7 +925,14 @@ class Path(BaseModel, validate_assignment=True):
         except Exception:
             return kwargs.get('default')
 
-    def set_data(self, data: Any, target: dict[str, Any], **kwargs) -> Any:
+    def set_data(
+        self,
+        data: Any,
+        target: dict[str, Any],
+        *,
+        mapper_spec: dict | None = None,
+        **kwargs,
+    ) -> Any:
         """Set data at this path's location with various update strategies.
 
         Sets data at the path location, merging with existing data according to
@@ -897,7 +950,7 @@ class Path(BaseModel, validate_assignment=True):
 
             Nested dictionary mode (per-key control):
                 The framework automatically builds nested update_mode specifications from
-                mapper hierarchies via `build_update_mode_tree()`. This allows per-subsection
+                mapper hierarchies via `build_mapper_spec()`. This allows per-subsection
                 control during multi-pass parsing.
 
                 Internal structure (automatically constructed)::
@@ -906,12 +959,13 @@ class Path(BaseModel, validate_assignment=True):
                         '__update_mode': 'merge',     # Mode for this level
                         'key_name': {                 # Per-key override
                             '__update_mode': 'append',
-                            'nested_key': {'__update_mode': 'replace'}
+                            '.details': {'__literal': True}
                         }
                     }
 
                 The `__update_mode` key sets the mode for the current level. Child keys
-                inherit parent mode unless explicitly overridden.
+                inherit parent mode unless explicitly overridden. A literal field is
+                assigned whole, including when its value is an empty dictionary.
 
                 Use case: Multi-pass parsing with polymorphic subsections
 
@@ -939,7 +993,8 @@ class Path(BaseModel, validate_assignment=True):
         Args:
             data: New data to set at the path.
             target: Dictionary to modify (modified in-place).
-            **kwargs: Options including update_mode (str | dict), passed to parser.set_data.
+            mapper_spec: Compiled per-field write settings from the mapping parser.
+            **kwargs: Options including update_mode (str | dict) for direct calls.
 
         Returns:
             Any: The data at the path location after setting and merging.
@@ -969,12 +1024,16 @@ class Path(BaseModel, validate_assignment=True):
             ... )
             >>> # Result: entries list now has both 'existing' and 'new' entries
         """
+        spec = _MapperSpec.compile(
+            mapper_spec if mapper_spec is not None else kwargs.get('update_mode')
+        )
         cur_data = self.get_data(target, **kwargs)
-        update_mode = _normalize_update_mode_spec(kwargs.get('update_mode'))
         path = self.relative_path
 
-        def update(current: Any, incoming: Any, update_mode_spec: Any):
-            mode = _get_update_mode(update_mode_spec)
+        def update(current: Any, incoming: Any, spec: _MapperSpec):
+            if spec.get('__literal'):
+                return current if incoming is None else incoming
+            mode = spec.get('__update_mode')
             # Type mismatch: keep incoming if append mode, otherwise use current
             if not isinstance(current, type(incoming)):
                 return (
@@ -984,12 +1043,15 @@ class Path(BaseModel, validate_assignment=True):
             # Dictionary merge: recursively merge all keys
             if isinstance(current, dict):
                 if mode != 'replace':
-                    for key in list(current.keys()):
-                        child_mode = _get_update_mode(update_mode_spec, key)
-                        # Recursively update each key (prefix with '.' for relative path)
-                        relative_key = key if key.startswith('.') else f'.{key}'
-                        incoming[relative_key] = update(
-                            current.get(key), incoming.get(relative_key), child_mode
+                    spec = spec.for_record(incoming or current)
+                    for key in current:
+                        target_key = key
+                        if key not in incoming and f'.{key}' in incoming:
+                            target_key = f'.{key}'
+                        incoming[target_key] = update(
+                            current[key],
+                            incoming.get(target_key),
+                            spec.child(key),
                         )
                 return incoming
 
@@ -1028,7 +1090,7 @@ class Path(BaseModel, validate_assignment=True):
                         # If within merge window, recursively merge with target element
                         if 0 <= target_index < len(incoming):
                             incoming[target_index] = update(
-                                d, incoming[target_index], update_mode_spec
+                                d, incoming[target_index], spec
                             )
                         else:
                             # Outside merge window, insert existing element at aligned index
@@ -1037,7 +1099,7 @@ class Path(BaseModel, validate_assignment=True):
                 elif mode == 'append':
                     # Append mode: prepend all current elements
                     for n, d in enumerate(current):
-                        incoming.insert(n, update(d, {}, update_mode_spec))
+                        incoming.insert(n, update(d, {}, spec))
                 return incoming
 
             # Scalar values: keep incoming if append mode, otherwise use current
@@ -1045,7 +1107,7 @@ class Path(BaseModel, validate_assignment=True):
 
         new_data = self.parser.set_data(path, target, data, **kwargs)
 
-        update(cur_data, new_data, update_mode)
+        update(cur_data, new_data, spec)
 
         return new_data
 
@@ -1205,6 +1267,10 @@ class BaseMapper(BaseModel):
     update_mode: str = Field(
         'merge', description="""Mode to update target with source."""
     )
+    literal: bool = Field(
+        False,
+        description="""Assign the value without expanding its contents as paths.""",
+    )
     # Internal attribute to store child mappers for multiple mapper sources
     _child_mappers: dict[str, 'BaseMapper'] = PrivateAttr({})
 
@@ -1220,6 +1286,10 @@ class BaseMapper(BaseModel):
             Any: Extracted/transformed data.
         """
         return None
+
+    def build_mapper_spec(self, update_mode: str | dict | None = None) -> _MapperSpec:
+        """Compile the write settings for this target."""
+        return _MapperSpec.compile(update_mode, self)
 
     def normalize_data(self, data: Any) -> Any:
         """Post-process extracted data (e.g., apply units). Override in subclasses.
@@ -1382,7 +1452,7 @@ class BaseMapper(BaseModel):
         else:
             logger.error('Unknown mapper type.')
 
-        for key in ['indices', 'remove', 'cache', 'update_mode']:
+        for key in ['indices', 'remove', 'cache', 'update_mode', 'literal']:
             if dct.get(key) is not None:
                 setattr(obj, key, dct.get(key))
         if paths.get('source'):
@@ -1652,6 +1722,7 @@ class Mapper(BaseMapper, validate_assignment=True):
         >>> result  # {'positions': [...], 'species': [...]}
     """
 
+    variant_field: ClassVar[str | None] = None
     mappers: list[BaseMapper] = Field([], description="""List of sub mappers.""")
     order: int = 0
     __cache: dict[str, Any] = {}
@@ -1820,6 +1891,10 @@ class Mapper(BaseMapper, validate_assignment=True):
                     # Filter by indices if specified (only include matching positions)
                     if indices and n not in indices:
                         continue
+                    if mapper.literal:
+                        if v is not None:
+                            value.append(v)
+                        continue
                     if isinstance(d, dict) and isinstance(v, dict) and '__index' in d:
                         v = {**v, '__index': d['__index']}
                     # Filter out empty values
@@ -1845,7 +1920,8 @@ class Mapper(BaseMapper, validate_assignment=True):
                     mapper_value if isinstance(mapper_value, list) else [mapper_value]
                 )
             if value:
-                value.sort(key=source_index)
+                if not mapper.literal:
+                    value.sort(key=source_index)
                 dct[mapper.target.path.path] = (
                     value[0] if mapper.indices is None else value
                 )
@@ -2093,14 +2169,9 @@ class MappingParser(ABC):
         are stripped from keys when writing to target (e.g., '.energy' becomes 'energy'),
         so target dictionaries have keys matching metainfo attribute names.
 
-        Update mode behavior:
-            If `update_mode` kwarg is not provided, this method constructs a nested
-            update_mode specification by traversing the mapper hierarchy via
-            `build_update_mode_tree()`. This allows each mapper to specify its own
-            `update_mode` via the annotation, enabling fine-grained control during
-            multi-pass parsing of polymorphic subsections.
-
-            If `update_mode` kwarg IS provided, it overrides the mapper hierarchy.
+        The mapper specification records the update mode and literal flag for each
+        target path. An explicit update mode overrides merge behavior while preserving
+        literal fields and polymorphic section specifications.
 
         Args:
             data: Dictionary with path keys, list of dicts, or direct value.
@@ -2108,7 +2179,7 @@ class MappingParser(ABC):
             **kwargs: Options including:
                 - update_mode (str | dict | None): Override default merge behavior
                 - remove (bool): Remove data from source after setting
-                - mapper (BaseMapper): Used to build update_mode tree if update_mode=None
+                - mapper (BaseMapper): Provides the field specifications for the write
 
         Examples:
             >>> # Auto mode from mapper annotations
@@ -2136,72 +2207,35 @@ class MappingParser(ABC):
             ... )
         """
 
-        def build_update_mode_tree(mapper: 'BaseMapper') -> dict[str, Any]:
-            """Recursively build nested update_mode specification from mapper hierarchy.
+        def expand(value: Any, spec: _MapperSpec, local: dict) -> Any:
+            """Resolve incoming paths before merging them with existing target values."""
+            if spec.get('__literal'):
+                return value
+            if isinstance(value, list):
+                return [expand(item, spec, {}) for item in value]
+            if not isinstance(value, dict):
+                return value
 
-            Called automatically by the framework when `update_mode` kwarg is None in
-            `convert()`. Traverses the mapper tree, extracting each mapper's `update_mode`
-            field and building a nested dictionary keyed by target path. This allows each
-            subsection to specify its own merge behavior during multi-pass parsing.
-
-            Users specify string update_mode on individual annotations; this function
-            constructs the nested tree for internal use.
-
-            Args:
-                mapper: Root mapper to traverse
-
-            Returns:
-                Nested dict with '__update_mode' at each level and child specs by path
-
-            Example output (automatically constructed from annotations):
-                {
-                    '__update_mode': 'merge',
-                    'numerical_settings': {
-                        '__update_mode': 'append',
-                        '.kmesh': {'__update_mode': 'merge'}
-                    }
-                }
-            """
-            # Set this mapper's mode at current level
-            spec: dict[str, Any] = {'__update_mode': mapper.update_mode}
-            # Recursively add child mappers' modes
-            if isinstance(mapper, Mapper):
-                for sub_mapper in mapper.mappers:
-                    # Key by target path so _get_update_mode can find child specs
-                    if sub_mapper.target:
-                        spec[sub_mapper.target.path.path] = build_update_mode_tree(
-                            sub_mapper
-                        )
-            return spec
-
-        if isinstance(data, dict):
-            update_mode_all = cast(
-                str | dict[str, Any] | None, kwargs.get('update_mode')
-            )
-            if update_mode_all is None:
-                mapper = cast(BaseMapper | None, kwargs.get('mapper'))
-                update_mode = (
-                    build_update_mode_tree(mapper)
-                    if mapper is not None
-                    else _normalize_update_mode_spec('merge')
-                )
-            else:
-                update_mode = _normalize_update_mode_spec(update_mode_all)
-
-            for key in list(data.keys()):
+            spec = spec.for_record(value)
+            for key in list(value):
                 path = Path(path=key)
-                update_mode_n = _get_update_mode(update_mode, key)
-                data_to_add = data.pop(key) if kwargs.get('remove') else data[key]
-                new_data = path.set_data(
-                    data_to_add,
-                    data if path.is_relative_path() else target,
-                    update_mode=update_mode_n,
+                child_spec = spec.child(key)
+                item = value.pop(key) if kwargs.get('remove') else value[key]
+                path.set_data(
+                    expand(item, child_spec, {}),
+                    local if path.is_relative_path() else target,
+                    mapper_spec=child_spec,
                 )
-                self.set_data(new_data, target, remove=True, update_mode=update_mode_n)
+            return local
 
-        elif isinstance(data, list):
-            for val in data:
-                self.set_data(val, target, **kwargs)
+        mapper = kwargs.get('mapper')
+        mode = kwargs.get('update_mode')
+        spec = (
+            mapper.build_mapper_spec(mode)
+            if mapper is not None
+            else _MapperSpec.compile('merge' if mode is None else mode)
+        )
+        expand(data, spec, target)
 
     def get_data(
         self,
@@ -2345,6 +2379,8 @@ class MetainfoMapper(MetainfoBaseMapper, Mapper):
 
     m_def: str = Field(None, description="""Section definition.""")
 
+    variant_field: ClassVar[str | None] = 'm_def'
+
     def get_data(
         self, source_data: dict[str, Any], parser: MappingParser, **kwargs
     ) -> Any:
@@ -2481,25 +2517,21 @@ class MetainfoParser(MappingParser):
                                 section_def = isection
                                 break
 
-                    # quantities = section_def.all_quantities
                     try:
                         sub_section = root.m_get_sub_section(section, n)
-                    except Exception:
+                    except IndexError:
                         sub_section = None
-                    if sub_section is None:
+
+                    if sub_section is not None and item_m_def is None:
+                        section_def = sub_section.m_def
+                    if (
+                        sub_section is None
+                        or type(sub_section) is not section_def.section_cls
+                    ):
                         sub_section = section_def.section_cls()
-                        # sub_section = section_def.section_cls(
-                        #     **{
-                        #         n: val_n.get(n)
-                        #         for n, q in quantities.items()
-                        #         if not q.derived and n in val_n
-                        #     }
-                        # )
                         if root.m_context:
-                            sub_section.m_root().m_context = root.m_context
-                        root.m_add_sub_section(section, sub_section)
-                    # Update the definition
-                    sub_section.m_def = section_def
+                            sub_section.m_context = root.m_context
+                        root.m_set(section, sub_section, index=n)
                     self.from_dict(val_n, sub_section)
                     # Check if sub-section is empty
                     if not any(
@@ -2507,10 +2539,11 @@ class MetainfoParser(MappingParser):
                             v.size > 0
                             if isinstance(v, np.ndarray)
                             else len(v) > 0
-                            if isinstance(v, (list, tuple, dict))
+                            if isinstance(v, (list, tuple))
                             else v is not None
                         )
-                        for v in sub_section.values()
+                        for name, v in vars(sub_section).items()
+                        if name in section_def.all_properties
                     ):
                         empty_indices.append(n)
 
@@ -2636,10 +2669,6 @@ class MetainfoParser(MappingParser):
                                 )
                                 mapper['mappers'].append(section_mapper)
                 if mapper.get('mappers', []):
-                    parent_is_root = (
-                        section.name in self.data_object.m_def.all_sub_sections
-                    )
-                    mapper['target'] = f'{"" if parent_is_root else "."}{section.name}'
                     mapper['indices'] = []
                     fill_mapper(
                         mapper,
@@ -2668,6 +2697,10 @@ class MetainfoParser(MappingParser):
                     # Build relative target path (root section uses absolute '', others use '.name')
                     quantity_mapper = {
                         'mapper': qannotation.mapper,
+                        'literal': (
+                            hasattr(quantity_def.type, 'standard_type')
+                            and quantity_def.type.standard_type() == 'dict'
+                        ),
                         'target': f'{"" if section == self.data_object else "."}{name}',
                     }
                     fill_mapper(
@@ -2693,10 +2726,6 @@ class MetainfoParser(MappingParser):
                 )
                 # Only add if mapper has content (sub-section was annotated)
                 if sub_section_mapper and sub_section_mapper.get('mapper'):
-                    # Build relative target path
-                    sub_section_mapper['target'] = (
-                        f'{"" if section == self.data_object else "."}{name}'
-                    )
                     # Repeating sub-sections use list indices, non-repeating use None
                     sub_section_mapper['indices'] = [] if sub_section.repeats else None
                     # Check if SubSection itself has annotation (for custom source paths)
@@ -2711,6 +2740,9 @@ class MetainfoParser(MappingParser):
                             ['remove', 'cache', 'path_parser', 'indices'],
                         )
                 if sub_section_mapper:
+                    sub_section_mapper['target'] = (
+                        f'{"" if section == self.data_object else "."}{name}'
+                    )
                     mapper['mapper'].append(sub_section_mapper)
 
             return mapper

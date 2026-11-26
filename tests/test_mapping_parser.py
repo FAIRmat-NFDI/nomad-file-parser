@@ -8,6 +8,7 @@ import pytest
 from nomad.datamodel import ArchiveSection
 from nomad.datamodel.metainfo.annotations import Mapper as MapperAnnotation
 from nomad.metainfo import Quantity, SubSection
+from nomad.metainfo.data_type import JSON
 
 from nomad_file_parser.logging import StructuredLoggerAdapter
 from nomad_file_parser.mapping_parser import (
@@ -701,10 +702,10 @@ class TestMappingParser:
 
     def test_set_data_nested_update_mode_per_key(self, monkeypatch):
         parser = ExampleParser(data={})
-        update_modes: list[tuple[str, str | None]] = []
+        update_modes: list[tuple[str, dict]] = []
 
         def fake_set_data(self, data, target, **kwargs):
-            update_modes.append((self.path, kwargs.get('update_mode')))
+            update_modes.append((self.path, kwargs['mapper_spec']))
             return data
 
         monkeypatch.setattr(Path, 'set_data', fake_set_data)
@@ -725,6 +726,88 @@ class TestMappingParser:
         assert mode_map['a']['__update_mode'] == 'merge'
         assert mode_map['b']['__update_mode'] == 'replace'
         assert mode_map['c']['__update_mode'] == 'append'
+
+    def test_mapper_spec_merges_field_aliases_once(self):
+        mapper = BaseMapper.from_dict(
+            {
+                'mapper': [
+                    {'mapper': '.input', 'target': '.details', 'literal': True},
+                    {'mapper': '.label', 'target': '.label', 'update_mode': 'append'},
+                ]
+            }
+        )
+        overrides = {
+            '__update_mode': 'merge',
+            'details': 'append',
+            '.details': 'replace',
+            'extra': 'append',
+        }
+        original = deepcopy(overrides)
+
+        assert mapper.build_mapper_spec(overrides) == {
+            '__update_mode': 'merge',
+            '.details': {'__update_mode': 'replace', '__literal': True},
+            '.label': {'__update_mode': 'merge'},
+            '.extra': {'__update_mode': 'append'},
+        }
+        assert overrides == original
+        assert mapper.build_mapper_spec()['.label']['__update_mode'] == 'append'
+
+    @pytest.mark.parametrize(
+        'mode', [None, 'merge', {'steps': {'__update_mode': 'merge'}}]
+    )
+    def test_assign_json_quantity_as_is(self, mode):
+        class Step(ArchiveSection):
+            label = Quantity(type=str)
+            label.m_annotations[MAPPING_ANNOTATION_KEY] = dict(
+                mapping=MapperAnnotation(mapper='.label')
+            )
+            details = Quantity(type=JSON)
+            details.m_annotations[MAPPING_ANNOTATION_KEY] = dict(
+                mapping=MapperAnnotation(mapper='.details')
+            )
+
+        class Run(ArchiveSection):
+            steps = SubSection(sub_section=Step, repeats=True)
+            steps.m_annotations[MAPPING_ANNOTATION_KEY] = dict(
+                mapping=MapperAnnotation(mapper='steps')
+            )
+
+        Run.m_def.m_annotations[MAPPING_ANNOTATION_KEY] = dict(
+            mapping=MapperAnnotation(mapper='@')
+        )
+        target = MetainfoParser(data_object=Run())
+        for payload in (
+            {'n_scf_steps': 9, 'n_scf_steps_max': 50},
+            {},
+            {'__index': 7, '__literal': False, '.literal': [{'a.b': 1}]},
+        ):
+            expected = deepcopy(payload)
+            source = ExampleParser(data={'steps': [{'details': payload}]})
+            mapped = target.mapper.get_data(source.data, source)
+            assert mapped['steps'][0]['.details'] == expected
+            source.convert(target, update_mode=mode)
+            assert target.data == {'steps': [{'details': expected}]}
+            assert target.data_object.steps[0].details == expected
+            assert payload == expected
+
+        ExampleParser(data={'steps': [{'label': 'SCF'}]}).convert(target)
+        assert target.data == {'steps': [{'label': 'SCF', 'details': expected}]}
+        assert target.data_object.steps[0].details == expected
+
+    def test_empty_subsection_with_private_cache(self):
+        class Step(ArchiveSection):
+            details = Quantity(type=JSON)
+
+        class Run(ArchiveSection):
+            steps = SubSection(sub_section=Step, repeats=True)
+
+        cached_step = Step()
+        cached_step._cache = {}
+        archive = Run(steps=[cached_step])
+        MetainfoParser(data_object=archive).from_dict({'steps': [{}, {'details': {}}]})
+
+        assert archive.m_to_dict()['steps'] == [{'details': {}}]
 
     def test_convert_xml_to_archive(self, xml_parser, archive_parser):
         archive_parser.annotation_key = 'xml'
@@ -841,12 +924,29 @@ class TestMappingParser:
         assert parser.data_object.items[1].name == 'second'
         assert parser.data_object.items[1].property_b == 'value_b'
 
+        first, second = parser.data_object.items
+        parser.from_dict(
+            {
+                'items': [
+                    {'m_def': type_b_qname, 'property_b': 'replacement'},
+                    {'property_b': 'updated'},
+                ]
+            }
+        )
+        replacement, updated = parser.data_object.items
+        assert type(replacement) is ItemTypeB
+        assert replacement.m_to_dict()['property_b'] == 'replacement'
+        assert first.m_parent is None
+        assert updated is second
+        assert updated.m_def is ItemTypeB.m_def
+        assert updated.property_b == 'updated'
+
     def test_polymorphic_mappers_sort_by_explicit_index(self):
         class Item(ArchiveSection):
             label = Quantity(type=str)
 
         class AtomicItem(Item):
-            pass
+            details = Quantity(type=JSON)
 
         class BeadItem(Item):
             pass
@@ -861,6 +961,9 @@ class TestMappingParser:
         Item.label.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[key] = (
             MapperAnnotation(mapper='.label')
         )
+        AtomicItem.details.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[key] = (
+            MapperAnnotation(mapper='.details')
+        )
         AtomicItem.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[key] = (
             MapperAnnotation(mapper='atomic_items')
         )
@@ -872,7 +975,7 @@ class TestMappingParser:
         source = ExampleParser(
             data={
                 'atomic_items': [
-                    {'__index': 1, 'label': 'atom1'},
+                    {'__index': 1, 'label': 'atom1', 'details': {'.raw': 1}},
                     {'__index': 2, 'label': 'atom2'},
                 ],
                 'bead_items': [
@@ -895,6 +998,7 @@ class TestMappingParser:
             'atom2',
             'unindexed bead',
         ]
+        assert target.data_object.items[1].details == {'.raw': 1}
         assert all('__index' not in item for item in target.data['items'])
         assert source.data['bead_items'][0]['__index'] == 0
         assert source.data['atomic_items'][0]['__index'] == 1
@@ -965,6 +1069,31 @@ class TestPolymorphicSubsectionResolution:
         for section in built:
             field = POLY_FIELD[type(section).__name__[-1]]
             assert getattr(section, field) == POLY_SOURCE[field]
+
+    def test_nested_polymorphic_subsection_with_same_name_as_root_field(self):
+        class NestedRoot(PolyRoot):
+            nested = SubSection(sub_section=PolyRoot)
+            nested.m_annotations[MAPPING_ANNOTATION_KEY] = {
+                'k1': MapperAnnotation(mapper='.nested')
+            }
+
+        NestedRoot.m_def.m_annotations[MAPPING_ANNOTATION_KEY] = {
+            'k1': MapperAnnotation(mapper='@')
+        }
+        self.apply_layout({('A', 'k1')})
+        archive = NestedRoot()
+        ExampleParser(data={'alpha': 1.0, 'nested': {'alpha': 2.0}}).convert(
+            MetainfoParser(data_object=archive, annotation_key='k1')
+        )
+
+        assert [item.alpha for item in archive.settings] == [1.0]
+        assert [item.alpha for item in archive.nested.settings] == [2.0]
+
+    def test_section_annotation_without_mapped_fields(self, monkeypatch):
+        self.apply_layout({('A', 'k1'), ('B', 'k1')})
+        monkeypatch.delitem(PolyB.beta.m_annotations[MAPPING_ANNOTATION_KEY], 'k1')
+
+        self.assert_key_resolution('k1', {('A', 'k1')})
 
     def test_polymorphic_scan_resolves_per_key(self):
         """The m_def-to-subsection feature's intent without the slot: the
