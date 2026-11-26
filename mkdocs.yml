@@ -12,6 +12,7 @@ nav:
       - Parse with mapping annotations: howto/mapping-parser.md
   - Reference:
       - API: reference/api.md
+      - Path syntax and semantics: reference/paths.md
 plugins:
   - search
 theme:
