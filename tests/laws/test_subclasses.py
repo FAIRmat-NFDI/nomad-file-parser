@@ -99,9 +99,6 @@ truthy_fields = st.dictionaries(st.sampled_from(sorted(FIELDS.values())), shape_
 
 
 @pytest.mark.question(14)
-@pytest.mark.xfail(
-    strict=True, reason='an unresolvable m_def falls back to the base type'
-)
 @given(st.sampled_from(UNRESOLVABLE), st.none() | names, truthy_fields)
 def test_unresolvable_m_def_raises(m_def, name, fields):
     """from_dict_shapes([{m_def: unresolvable, **fields}]) raises.
@@ -110,12 +107,10 @@ def test_unresolvable_m_def_raises(m_def, name, fields):
     the hierarchy (unknown, or a section outside it) is an error. Inside
     NOMAD it cannot happen, since the metainfo parser writes the `m_def`
     itself; it can when someone annotates a class that is not a NOMAD
-    section. The exception type is left to the fix. Fails today: the element
-    is built as the declared base type and subclass fields are lost
-    silently.
+    section. The parser raises ValueError before creating the subsection.
     """
     element = {'m_def': m_def, **fields, **({} if name is None else {'name': name})}
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='Invalid m_def'):
         from_dict_shapes([element])
 
 
