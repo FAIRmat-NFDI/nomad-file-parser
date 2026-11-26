@@ -1076,7 +1076,10 @@ class Path(BaseModel, validate_assignment=True):
                     if start < 0:
                         left_overhang = min(-start, len(current_to_merge))
                         if left_overhang:
-                            incoming[:0] = current_to_merge[:left_overhang]
+                            incoming[:0] = [
+                                update(d, {}, update_mode_spec)
+                                for d in current_to_merge[:left_overhang]
+                            ]
                             current_to_merge = current_to_merge[left_overhang:]
                             start = left_overhang
 
@@ -1090,7 +1093,8 @@ class Path(BaseModel, validate_assignment=True):
                         else:
                             # Outside merge window, insert existing element at aligned index
                             insert_at = max(0, min(target_index, len(incoming)))
-                            incoming.insert(insert_at, d)
+                            incoming.insert(insert_at, update(d, {}, update_mode_spec))
+
                 elif mode == 'append':
                     # Append mode: prepend all current elements
                     for n, d in enumerate(current):
