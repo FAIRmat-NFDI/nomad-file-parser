@@ -222,6 +222,11 @@ Maps the first 3 bytes of a file to (extension, open_function) tuples for gzip, 
 """
 
 
+function_call_re : re.Pattern = re.compile(r'(\w+)\((.*)\)')
+dot_in_beginning_re : re.Pattern = re.compile(r'(?:^|(?<=\s))\.')
+"""Regex patterns for parsing function calls and leading dots in paths."""
+
+
 def is_not_value(value: Any) -> bool:
     """Check if a value is considered "empty"/"not a value".
 
@@ -845,9 +850,11 @@ class Path(BaseModel, validate_assignment=True):
         derived path attributes.
 
         Computation steps:
-        1. Strip leading '.' from path to get relative_path
-        2. Join parent.absolute_path with relative_path to get absolute_path
-        3. Remove indices/filters from absolute_path to get reduced_path
+        1. Determine if it is a function call (e.g., 'func(.path)') and extract the inner path and the function name.
+        2. Strip leading '.' from path to get relative_path
+        3. Join parent.absolute_path with relative_path to get absolute_path
+        4. Add function name back to relative_path and absolute_path if applicable
+        5. Remove indices/filters from absolute_path to get reduced_path
 
         Validation behavior:
             - **Timing**: Runs BEFORE field assignment and type checking
@@ -877,15 +884,29 @@ class Path(BaseModel, validate_assignment=True):
         Raises:
             AttributeError: If parent is not None but lacks absolute_path attribute.
         """
-        relative_path = values.get('path', '')
+        relative_path_raw = values.get('path', '')
         parent = values.get('parent')
-        relative_path = re.sub(r'(?:^|(?<=\s))\.', '', relative_path)
-        values['relative_path'] = relative_path
+
+        match = function_call_re.fullmatch(relative_path_raw)
+        if match:
+            function, relative_path = match.groups()
+        else:
+            function, relative_path = None, relative_path_raw
+
+        relative_path = dot_in_beginning_re.sub('', relative_path)
+        if function:
+            values['relative_path'] = f'{function}({relative_path})'
+        else:
+            values['relative_path'] = relative_path
 
         absolute_path = relative_path
         if parent:
             segments = [parent.absolute_path, absolute_path]
             absolute_path = '.'.join([s for s in segments if s != '@' and s])
+
+        if function:
+            absolute_path = f'{function}({absolute_path})'
+
         values['absolute_path'] = absolute_path
 
         values['reduced_path'] = re.sub(r'\[.+?\]|\|', '', absolute_path)
